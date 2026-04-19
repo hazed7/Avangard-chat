@@ -1,0 +1,27 @@
+name: Avangard CI
+
+on:
+  push:
+    branches: [ "main", "master" ]
+  pull_request:
+    branches: [ "main", "master" ]
+
+jobs:
+  build-and-test:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Build and start all services
+        run: docker-compose up -d --build
+
+      - name: Sleep for 10 seconds
+        run: sleep 10
+
+      - name: Check running containers
+        run: docker ps -a
+
+      - name: Show app logs
+        run: docker-compose logs app
