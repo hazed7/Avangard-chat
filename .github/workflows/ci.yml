@@ -2,26 +2,32 @@ name: Avangard CI
 
 on:
   push:
-    branches: [ "main", "master" ]
+    branches: ["main"]
   pull_request:
-    branches: [ "main", "master" ]
+    branches: ["main"]
 
 jobs:
   build-and-test:
     runs-on: ubuntu-latest
+    timeout-minutes: 15
 
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
 
-      - name: Build and start all services
-        run: docker compose up -d --build
+      - name: Build and wait for all services
+        run: docker compose up -d --build --wait --wait-timeout 180
 
-      - name: Sleep for 10 seconds
-        run: sleep 10
+      - name: Verify app is reachable
+        run: curl --fail --silent --show-error http://localhost:8000/openapi.json > /dev/null
 
-      - name: Check running containers
-        run: docker ps -a
+      - name: Check container status
+        run: docker compose ps
 
-      - name: Show app logs
-        run: docker compose logs app
+      - name: Show service logs on failure
+        if: failure()
+        run: docker compose logs
+
+      - name: Tear down stack
+        if: always()
+        run: docker compose down -v
