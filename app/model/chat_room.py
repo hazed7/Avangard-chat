@@ -21,6 +21,7 @@ class ChatRoom(Document):
             "name": self.name,
             "is_group": self.is_group,
             "member_ids": [linked_document_id(member) for member in self.members],
+            "created_by_id": linked_document_id(self.created_by),
             "created_at": self.created_at,
         }
 
