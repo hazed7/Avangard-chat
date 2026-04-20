@@ -1,5 +1,6 @@
 from beanie.odm.operators.find.comparison import In
 from beanie.odm.operators.find.logical import Or
+from fastapi import HTTPException
 
 from app.model.chat_room import ChatRoom
 from app.model.user import User
@@ -22,6 +23,22 @@ class RoomService:
         return await ChatRoom.get(room_id)
 
     @staticmethod
+    async def _get_room_or_404(room_id: str) -> ChatRoom:
+        room = await ChatRoom.get(room_id)
+        if not room:
+            raise HTTPException(status_code=404, detail="Room not found")
+        return room
+
+    @staticmethod
+    async def _ensure_room_owner(room: ChatRoom, user_id: str) -> None:
+        await room.fetch_all_links()
+        if room.created_by.id != user_id:
+            raise HTTPException(
+                status_code=403,
+                detail="You do not have permission to delete this room",
+            )
+
+    @staticmethod
     async def list_all_by_user(user_id: str) -> list[ChatRoom]:
         user = await User.find_one(User.id == user_id)
         if not user:
@@ -34,9 +51,7 @@ class RoomService:
         ).to_list()
 
     @staticmethod
-    async def delete_room(room_id: str) -> bool:
-        room = await ChatRoom.get(room_id)
-        if not room:
-            return False
+    async def delete_room(room_id: str, user_id: str) -> None:
+        room = await RoomService._get_room_or_404(room_id)
+        await RoomService._ensure_room_owner(room, user_id)
         await room.delete()
-        return True

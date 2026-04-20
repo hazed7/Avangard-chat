@@ -1,4 +1,4 @@
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends
 
 from app.dependencies import verify_token
 from app.schema.message import MessageCreate, MessageResponse, MessageUpdate
@@ -34,13 +34,15 @@ async def edit_message(
     data: MessageUpdate,
     user: dict = Depends(verify_token),
 ):
-    message = await MessageService.edit(message_id=message_id, data=data)
-    if not message:
-        raise HTTPException(status_code=404, detail="Message not found")
+    message = await MessageService.edit(
+        message_id=message_id,
+        data=data,
+        user_id=user["sub"],
+    )
     return await message.to_response()
 
 
 @router.delete("/{message_id}")
 async def delete_message(message_id: str, user: dict = Depends(verify_token)):
-    await MessageService.delete(message_id=message_id)
+    await MessageService.delete(message_id=message_id, user_id=user["sub"])
     return {"ok": True}

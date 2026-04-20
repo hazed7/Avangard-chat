@@ -22,6 +22,22 @@ class MessageService:
         return sender
 
     @staticmethod
+    async def _get_message_or_404(message_id: str) -> Message:
+        message = await Message.get(message_id)
+        if not message:
+            raise HTTPException(status_code=404, detail="Message not found")
+        return message
+
+    @staticmethod
+    async def _ensure_message_owner(message: Message, user_id: str) -> None:
+        await message.fetch_all_links()
+        if message.sender.id != user_id:
+            raise HTTPException(
+                status_code=403,
+                detail="You do not have permission to modify this message",
+            )
+
+    @staticmethod
     async def send(data: MessageCreate, sender_id: str) -> Message:
         room = await MessageService._get_room_or_404(data.room_id)
         sender = await MessageService._get_sender_or_404(sender_id)
@@ -39,18 +55,17 @@ class MessageService:
         )
 
     @staticmethod
-    async def edit(message_id: str, data: MessageUpdate) -> Message | None:
-        message = await Message.get(message_id)
-        if not message:
-            return None
+    async def edit(message_id: str, data: MessageUpdate, user_id: str) -> Message:
+        message = await MessageService._get_message_or_404(message_id)
+        await MessageService._ensure_message_owner(message, user_id)
         message.text = data.text
         message.is_edited = True
         await message.save()
         return message
 
     @staticmethod
-    async def delete(message_id: str):
-        message = await Message.get(message_id)
-        if message:
-            message.is_deleted = True
-            await message.save()
+    async def delete(message_id: str, user_id: str) -> None:
+        message = await MessageService._get_message_or_404(message_id)
+        await MessageService._ensure_message_owner(message, user_id)
+        message.is_deleted = True
+        await message.save()

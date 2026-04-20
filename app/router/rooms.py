@@ -29,7 +29,5 @@ async def get_rooms_by_user_id(user_id: str, user: dict = Depends(verify_token))
 
 @router.delete("/{room_id}")
 async def delete_room(room_id: str, user: dict = Depends(verify_token)):
-    success = await RoomService.delete_room(room_id)
-    if not success:
-        raise HTTPException(status_code=404, detail="Room not found")
+    await RoomService.delete_room(room_id, user["sub"])
     return {"ok": True}
