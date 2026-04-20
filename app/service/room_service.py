@@ -11,7 +11,11 @@ class RoomService:
     @staticmethod
     async def create(data: ChatRoomCreate, creator_id: str) -> ChatRoom:
         creator = await User.find_one(User.id == creator_id)
+        if not creator:
+            raise HTTPException(status_code=401, detail="Invalid user")
         members = await User.find(In(User.id, data.member_ids)).to_list()
+        if len(members) != len(data.member_ids):
+            raise HTTPException(status_code=400, detail="One or more members not found")
         room = ChatRoom(
             name=data.name, is_group=data.is_group, members=members, created_by=creator
         )
