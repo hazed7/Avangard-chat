@@ -12,7 +12,7 @@
             "attributes": {
                 "post.logout.redirect.uris": "*"
             },
-            "defaultClientScopes" : [ "web-origins", "acr", "roles", "profile", "email" ],
+            "defaultClientScopes" : [ "web-origins", "acr", "roles", "profile" ],
             "optionalClientScopes" : [ "address", "phone", "offline_access" ]
         }
     ],
@@ -287,51 +287,6 @@
                         "access.token.claim" : "true",
                         "claim.name" : "updated_at",
                         "jsonType.label" : "long"
-                    }
-                }
-            ]
-        },
-        {
-            "id" : "d274323e-cd09-4a5c-94b6-a26545305f96",
-            "name" : "email",
-            "description" : "OpenID Connect built-in scope: email",
-            "protocol" : "openid-connect",
-            "attributes" : {
-                "include.in.token.scope" : "true",
-                "display.on.consent.screen" : "true",
-                "consent.screen.text" : "${emailScopeConsentText}"
-            },
-            "protocolMappers" : [
-                {
-                    "id" : "0c0b207e-9a1f-454b-b54e-8d762619b7d4",
-                    "name" : "email",
-                    "protocol" : "openid-connect",
-                    "protocolMapper" : "oidc-usermodel-attribute-mapper",
-                    "consentRequired" : false,
-                    "config" : {
-                        "introspection.token.claim" : "true",
-                        "userinfo.token.claim" : "true",
-                        "user.attribute" : "email",
-                        "id.token.claim" : "true",
-                        "access.token.claim" : "true",
-                        "claim.name" : "email",
-                        "jsonType.label" : "String"
-                    }
-                },
-                {
-                    "id" : "bca13ede-2ef7-44eb-9b67-1db4e177890e",
-                    "name" : "email verified",
-                    "protocol" : "openid-connect",
-                    "protocolMapper" : "oidc-usermodel-property-mapper",
-                    "consentRequired" : false,
-                    "config" : {
-                        "introspection.token.claim" : "true",
-                        "userinfo.token.claim" : "true",
-                        "user.attribute" : "emailVerified",
-                        "id.token.claim" : "true",
-                        "access.token.claim" : "true",
-                        "claim.name" : "email_verified",
-                        "jsonType.label" : "boolean"
                     }
                 }
             ]

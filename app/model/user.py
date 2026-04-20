@@ -2,14 +2,13 @@ from datetime import UTC, datetime
 from typing import Optional
 
 from beanie import Document
-from pydantic import ConfigDict, EmailStr, Field
+from pydantic import ConfigDict, Field
 
 
 class User(Document):
     id: str = Field(alias="_id")
     username: str
     full_name: str
-    email: EmailStr
     avatar_url: Optional[str] = None
     is_online: bool = False
     created_at: datetime = Field(default_factory=lambda: datetime.now(UTC))
@@ -22,7 +21,6 @@ class User(Document):
             "id": self.id,
             "username": self.username,
             "full_name": self.full_name,
-            "email": self.email,
             "avatar_url": self.avatar_url,
             "is_online": self.is_online,
             "created_at": self.created_at,
@@ -30,4 +28,4 @@ class User(Document):
 
     class Settings:
         name = "users"
-        indexes = ["username", "email", "full_name"]
+        indexes = ["username", "full_name"]

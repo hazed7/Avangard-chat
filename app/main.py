@@ -51,7 +51,6 @@ def custom_openapi():
                     "scopes": {
                         "openid": "OpenID Connect",
                         "profile": "Profile",
-                        "email": "Email",
                     },
                 }
             },

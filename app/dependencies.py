@@ -45,7 +45,6 @@ async def get_or_create_user(payload: dict) -> User:
             id=keycloak_id,
             username=payload.get("preferred_username", ""),
             full_name=payload.get("name", ""),
-            email=payload.get("email", ""),
         )
         await user.insert()
     return user
