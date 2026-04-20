@@ -1,3 +1,5 @@
+from fastapi import HTTPException
+
 from app.model.chat_room import ChatRoom
 from app.model.message import Message
 from app.model.user import User
@@ -6,9 +8,23 @@ from app.schema.message import MessageCreate, MessageUpdate
 
 class MessageService:
     @staticmethod
-    async def send(data: MessageCreate, sender_id: str) -> Message:
-        room = await ChatRoom.get(data.room_id)
+    async def _get_room_or_404(room_id: str) -> ChatRoom:
+        room = await ChatRoom.get(room_id)
+        if not room:
+            raise HTTPException(status_code=404, detail="Room not found")
+        return room
+
+    @staticmethod
+    async def _get_sender_or_404(sender_id: str) -> User:
         sender = await User.find_one(User.id == sender_id)
+        if not sender:
+            raise HTTPException(status_code=404, detail="Sender not found")
+        return sender
+
+    @staticmethod
+    async def send(data: MessageCreate, sender_id: str) -> Message:
+        room = await MessageService._get_room_or_404(data.room_id)
+        sender = await MessageService._get_sender_or_404(sender_id)
         message = Message(room=room, sender=sender, text=data.text)
         await message.insert()
         return message
@@ -17,7 +33,7 @@ class MessageService:
     async def get_history(
         room_id: str, limit: int = 50, offset: int = 0
     ) -> list[Message]:
-        room = await ChatRoom.get(room_id)
+        room = await MessageService._get_room_or_404(room_id)
         return await (
             Message.find(Message.room.id == room.id).skip(offset).limit(limit).to_list()
         )
