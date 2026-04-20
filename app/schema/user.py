@@ -12,4 +12,3 @@ class UserResponse(BaseModel):
     is_online: bool
     created_at: datetime
     last_time_online: Optional[datetime] = None
-

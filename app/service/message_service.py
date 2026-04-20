@@ -19,10 +19,7 @@ class MessageService:
     ) -> list[Message]:
         room = await ChatRoom.get(room_id)
         return await (
-            Message.find(Message.room.id == room.id)
-            .skip(offset)
-            .limit(limit)
-            .to_list()
+            Message.find(Message.room.id == room.id).skip(offset).limit(limit).to_list()
         )
 
     @staticmethod

@@ -7,16 +7,12 @@ from app.schema.chat_room import ChatRoomCreate
 
 
 class RoomService:
-
     @staticmethod
     async def create(data: ChatRoomCreate, creator_id: str) -> ChatRoom:
         creator = await User.find_one(User.id == creator_id)
         members = await User.find(In(User.id, data.member_ids)).to_list()
         room = ChatRoom(
-            name=data.name,
-            is_group=data.is_group,
-            members=members,
-            created_by=creator
+            name=data.name, is_group=data.is_group, members=members, created_by=creator
         )
         await room.insert()
         return room

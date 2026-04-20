@@ -22,4 +22,3 @@ class MessageResponse(BaseModel):
     is_deleted: bool
     read_by: List[str]
     created_at: datetime
-

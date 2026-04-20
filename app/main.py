@@ -24,8 +24,8 @@ app = FastAPI(
         "clientId": settings.keycloak_client_id,
         "realm": settings.keycloak_realm,
         "appName": "Avangard",
-        "usePkceWithAuthorizationCodeGrant": True
-    }
+        "usePkceWithAuthorizationCodeGrant": True,
+    },
 )
 
 app.include_router(users.router, prefix="/user", tags=["Users"])
@@ -36,11 +36,7 @@ app.include_router(messages.router, prefix="/message", tags=["Messages"])
 def custom_openapi():
     if app.openapi_schema:
         return app.openapi_schema
-    schema = get_openapi(
-        title="Avangard API",
-        version="0.0.1",
-        routes=app.routes
-    )
+    schema = get_openapi(title="Avangard API", version="0.0.1", routes=app.routes)
     schema["components"]["securitySchemes"] = {
         "OAuth2": {
             "type": "oauth2",
@@ -56,9 +52,9 @@ def custom_openapi():
                         "openid": "OpenID Connect",
                         "profile": "Profile",
                         "email": "Email",
-                    }
+                    },
                 }
-            }
+            },
         }
     }
     schema["security"] = [{"OAuth2": ["openid"]}]

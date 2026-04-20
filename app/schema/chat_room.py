@@ -16,4 +16,3 @@ class ChatRoomResponse(BaseModel):
     is_group: bool
     member_ids: List[str]
     created_at: datetime
-

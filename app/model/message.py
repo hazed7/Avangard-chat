@@ -34,4 +34,3 @@ class Message(Document):
     class Settings:
         name = "messages"
         indexes = ["room", "created_at"]
-

@@ -27,5 +27,3 @@ class ChatRoom(Document):
 
     class Settings:
         name = "chat_rooms"
-
-        

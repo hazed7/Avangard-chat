@@ -29,10 +29,7 @@ def get_jwks():
 async def verify_token(token: str = Depends(oauth2_scheme)) -> dict:
     try:
         payload = jwt.decode(
-            token,
-            get_jwks(),
-            algorithms=["RS256"],
-            options={"verify_aud": False}
+            token, get_jwks(), algorithms=["RS256"], options={"verify_aud": False}
         )
         await get_or_create_user(payload)
         return payload
@@ -52,4 +49,3 @@ async def get_or_create_user(payload: dict) -> User:
         )
         await user.insert()
     return user
-

@@ -26,6 +26,9 @@ jobs:
       - name: Run Ruff
         run: uv run --group dev ruff check .
 
+      - name: Check formatting
+        run: uv run --group dev ruff format --check .
+
       - name: Build and wait for all services
         run: docker compose up -d --build --wait --wait-timeout 180
 

@@ -10,8 +10,5 @@ from app.model.user import User
 async def init_db():
     client = AsyncIOMotorClient(settings.mongodb_url)
     await init_beanie(
-        database=client[settings.db_name],
-        document_models=[User, Message, ChatRoom]
+        database=client[settings.db_name], document_models=[User, Message, ChatRoom]
     )
-
-    

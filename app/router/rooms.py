@@ -33,4 +33,3 @@ async def delete_room(room_id: str, user: dict = Depends(verify_token)):
     if not success:
         raise HTTPException(status_code=404, detail="Room not found")
     return {"ok": True}
-

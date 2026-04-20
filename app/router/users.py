@@ -21,4 +21,3 @@ async def get_user(user_id: str, user: dict = Depends(verify_token)):
     if not result:
         raise HTTPException(status_code=404, detail="User not found")
     return result.to_response()
-
