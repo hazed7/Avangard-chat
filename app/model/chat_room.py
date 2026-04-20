@@ -4,6 +4,7 @@ from typing import List, Optional
 from beanie import Document, Link
 from pydantic import Field
 
+from app.links import linked_document_id
 from app.model.user import User
 
 
@@ -15,13 +16,11 @@ class ChatRoom(Document):
     created_at: datetime = Field(default_factory=lambda: datetime.now(UTC))
 
     async def to_response(self) -> dict:
-        await self.fetch_all_links()
-
         return {
             "id": str(self.id),
             "name": self.name,
             "is_group": self.is_group,
-            "member_ids": [member.id for member in self.members],
+            "member_ids": [linked_document_id(member) for member in self.members],
             "created_at": self.created_at,
         }
 

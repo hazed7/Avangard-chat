@@ -1,7 +1,7 @@
 from beanie.odm.operators.find.comparison import In
-from beanie.odm.operators.find.logical import Or
 from fastapi import HTTPException
 
+from app.links import linked_document_id, linked_document_ref
 from app.model.chat_room import ChatRoom
 from app.model.user import User
 from app.schema.chat_room import ChatRoomCreate
@@ -31,10 +31,9 @@ class RoomService:
 
     @staticmethod
     async def _ensure_room_access(room: ChatRoom, user_id: str) -> None:
-        await room.fetch_all_links()
-        if room.created_by.id == user_id:
+        if linked_document_id(room.created_by) == user_id:
             return
-        if any(member.id == user_id for member in room.members):
+        if any(linked_document_id(member) == user_id for member in room.members):
             return
         raise HTTPException(
             status_code=403,
@@ -43,8 +42,7 @@ class RoomService:
 
     @staticmethod
     async def _ensure_room_owner(room: ChatRoom, user_id: str) -> None:
-        await room.fetch_all_links()
-        if room.created_by.id != user_id:
+        if linked_document_id(room.created_by) != user_id:
             raise HTTPException(
                 status_code=403,
                 detail="You do not have permission to delete this room",
@@ -58,14 +56,14 @@ class RoomService:
 
     @staticmethod
     async def list_all_by_user(user_id: str) -> list[ChatRoom]:
-        user = await User.find_one(User.id == user_id)
-        if not user:
-            return []
+        user_ref = linked_document_ref(User.Settings.name, user_id)
         return await ChatRoom.find(
-            Or(
-                ChatRoom.members.id == user.id,
-                ChatRoom.created_by.id == user.id,
-            )
+            {
+                "$or": [
+                    {"members": user_ref},
+                    {"created_by": user_ref},
+                ]
+            }
         ).to_list()
 
     @staticmethod

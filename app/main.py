@@ -3,10 +3,10 @@ from contextlib import asynccontextmanager
 from fastapi import FastAPI, HTTPException, WebSocket, WebSocketDisconnect
 from fastapi.openapi.utils import get_openapi
 
-from app.config import settings
 from app.database import init_db
 from app.dependencies import verify_token
-from app.router import messages, rooms, users
+from app.router import auth, messages, rooms, users
+from app.service.room_service import RoomService
 from app.ws.manager import manager
 
 
@@ -19,15 +19,9 @@ async def lifespan(app: FastAPI):
 app = FastAPI(
     title="Avangard API",
     lifespan=lifespan,
-    swagger_ui_oauth2_redirect_url="/oauth2-redirect",
-    swagger_ui_init_oauth={
-        "clientId": settings.keycloak_client_id,
-        "realm": settings.keycloak_realm,
-        "appName": "Avangard",
-        "usePkceWithAuthorizationCodeGrant": True,
-    },
 )
 
+app.include_router(auth.router, prefix="/auth", tags=["Auth"])
 app.include_router(users.router, prefix="/user", tags=["Users"])
 app.include_router(rooms.router, prefix="/room", tags=["Rooms"])
 app.include_router(messages.router, prefix="/message", tags=["Messages"])
@@ -38,33 +32,25 @@ def custom_openapi():
         return app.openapi_schema
     schema = get_openapi(title="Avangard API", version="0.0.1", routes=app.routes)
     schema["components"]["securitySchemes"] = {
-        "OAuth2": {
-            "type": "oauth2",
-            "flows": {
-                "authorizationCode": {
-                    "authorizationUrl": (
-                        f"{settings.keycloak_public_url}/realms/{settings.keycloak_realm}/protocol/openid-connect/auth"
-                    ),
-                    "tokenUrl": (
-                        f"{settings.keycloak_public_url}/realms/{settings.keycloak_realm}/protocol/openid-connect/token"
-                    ),
-                    "scopes": {
-                        "openid": "OpenID Connect",
-                        "profile": "Profile",
-                    },
-                }
-            },
+        "BearerAuth": {
+            "type": "http",
+            "scheme": "bearer",
+            "bearerFormat": "JWT",
         }
     }
-    schema["security"] = [{"OAuth2": ["openid"]}]
+    schema["security"] = [{"BearerAuth": []}]
     app.openapi_schema = schema
     return app.openapi_schema
+
+
+app.openapi = custom_openapi
 
 
 @app.websocket("/ws/{room_id}")
 async def chat(websocket: WebSocket, room_id: str, token: str):
     try:
-        await verify_token(token)
+        payload = await verify_token(token)
+        await RoomService.get_for_user(room_id, payload["sub"])
     except HTTPException:
         await websocket.close(code=1008)
         return

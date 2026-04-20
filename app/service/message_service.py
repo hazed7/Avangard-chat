@@ -1,5 +1,6 @@
 from fastapi import HTTPException
 
+from app.links import linked_document_id, linked_document_ref
 from app.model.chat_room import ChatRoom
 from app.model.message import Message
 from app.model.user import User
@@ -31,8 +32,7 @@ class MessageService:
 
     @staticmethod
     async def _ensure_message_owner(message: Message, user_id: str) -> None:
-        await message.fetch_all_links()
-        if message.sender.id != user_id:
+        if linked_document_id(message.sender) != user_id:
             raise HTTPException(
                 status_code=403,
                 detail="You do not have permission to modify this message",
@@ -52,7 +52,10 @@ class MessageService:
     ) -> list[Message]:
         room = await RoomService.get_for_user(room_id, user_id)
         return await (
-            Message.find(Message.room.id == room.id).skip(offset).limit(limit).to_list()
+            Message.find({"room": linked_document_ref(ChatRoom.Settings.name, room.id)})
+            .skip(offset)
+            .limit(limit)
+            .to_list()
         )
 
     @staticmethod
