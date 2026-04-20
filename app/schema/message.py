@@ -1,5 +1,5 @@
 from datetime import datetime
-from typing import List
+from typing import List, Optional
 
 from pydantic import BaseModel, Field
 
@@ -19,6 +19,7 @@ class MessageResponse(BaseModel):
     sender_id: str
     text: str = Field(min_length=1, max_length=5000)
     is_edited: bool
+    edited_at: Optional[datetime] = None
     is_deleted: bool
     read_by: List[str]
     created_at: datetime

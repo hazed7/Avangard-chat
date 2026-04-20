@@ -1,3 +1,5 @@
+from datetime import UTC, datetime
+
 from fastapi import HTTPException
 
 from app.links import linked_document_id, linked_document_ref
@@ -64,6 +66,7 @@ class MessageService:
         await MessageService._ensure_message_owner(message, user_id)
         message.text = data.text
         message.is_edited = True
+        message.edited_at = datetime.now(UTC)
         await message.save()
         return message
 
