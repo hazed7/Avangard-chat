@@ -4,6 +4,7 @@ from app.model.chat_room import ChatRoom
 from app.model.message import Message
 from app.model.user import User
 from app.schema.message import MessageCreate, MessageUpdate
+from app.service.room_service import RoomService
 
 
 class MessageService:
@@ -39,7 +40,7 @@ class MessageService:
 
     @staticmethod
     async def send(data: MessageCreate, sender_id: str) -> Message:
-        room = await MessageService._get_room_or_404(data.room_id)
+        room = await RoomService.get_for_user(data.room_id, sender_id)
         sender = await MessageService._get_sender_or_404(sender_id)
         message = Message(room=room, sender=sender, text=data.text)
         await message.insert()
@@ -47,9 +48,9 @@ class MessageService:
 
     @staticmethod
     async def get_history(
-        room_id: str, limit: int = 50, offset: int = 0
+        room_id: str, user_id: str, limit: int = 50, offset: int = 0
     ) -> list[Message]:
-        room = await MessageService._get_room_or_404(room_id)
+        room = await RoomService.get_for_user(room_id, user_id)
         return await (
             Message.find(Message.room.id == room.id).skip(offset).limit(limit).to_list()
         )

@@ -22,6 +22,7 @@ async def get_history(
 ):
     messages = await MessageService.get_history(
         room_id=room_id,
+        user_id=user["sub"],
         limit=limit,
         offset=offset,
     )

@@ -30,6 +30,18 @@ class RoomService:
         return room
 
     @staticmethod
+    async def _ensure_room_access(room: ChatRoom, user_id: str) -> None:
+        await room.fetch_all_links()
+        if room.created_by.id == user_id:
+            return
+        if any(member.id == user_id for member in room.members):
+            return
+        raise HTTPException(
+            status_code=403,
+            detail="You do not have permission to access this room",
+        )
+
+    @staticmethod
     async def _ensure_room_owner(room: ChatRoom, user_id: str) -> None:
         await room.fetch_all_links()
         if room.created_by.id != user_id:
@@ -37,6 +49,12 @@ class RoomService:
                 status_code=403,
                 detail="You do not have permission to delete this room",
             )
+
+    @staticmethod
+    async def get_for_user(room_id: str, user_id: str) -> ChatRoom:
+        room = await RoomService._get_room_or_404(room_id)
+        await RoomService._ensure_room_access(room, user_id)
+        return room
 
     @staticmethod
     async def list_all_by_user(user_id: str) -> list[ChatRoom]:
