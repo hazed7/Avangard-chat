@@ -1,4 +1,4 @@
-from fastapi import FastAPI, WebSocket, WebSocketDisconnect
+from fastapi import FastAPI, HTTPException, WebSocket, WebSocketDisconnect
 from fastapi.openapi.utils import get_openapi
 from contextlib import asynccontextmanager
 from app.database import init_db
@@ -67,12 +67,8 @@ def custom_openapi():
 @app.websocket("/ws/{room_id}")
 async def chat(websocket: WebSocket, room_id: str, token: str):
     try:
-        from fastapi.security import HTTPAuthorizationCredentials
-        credentials = HTTPAuthorizationCredentials(
-            scheme="bearer", credentials=token
-        )
-        await verify_token(credentials)
-    except Exception:
+        await verify_token(token)
+    except HTTPException:
         await websocket.close(code=1008)
         return
 
