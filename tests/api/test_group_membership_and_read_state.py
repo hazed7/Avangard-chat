@@ -104,6 +104,42 @@ def test_group_member_management_rejects_dm_and_creator_removal(client: TestClie
     assert creator_remove_response.status_code == 400
 
 
+def test_group_member_management_handles_unknown_and_non_member_users(
+    client: TestClient,
+):
+    owner = register_user(client, "membership-unknown-owner")
+    member = register_user(client, "membership-unknown-member")
+    non_member = register_user(client, "membership-unknown-non-member")
+
+    room = create_room(
+        client,
+        owner["access_token"],
+        member_ids=[member["user"]["id"]],
+        name="membership-unknown-room",
+    )
+
+    remove_non_member = client.delete(
+        f"/room/{room['id']}/members/{non_member['user']['id']}",
+        headers=auth_headers(owner["access_token"]),
+    )
+    assert remove_non_member.status_code == 200
+    assert member["user"]["id"] in remove_non_member.json()["member_ids"]
+
+    unknown_id = "00000000-0000-0000-0000-000000000000"
+    add_unknown = client.post(
+        f"/room/{room['id']}/members",
+        headers=auth_headers(owner["access_token"]),
+        json={"user_id": unknown_id},
+    )
+    assert add_unknown.status_code == 400
+
+    remove_unknown = client.delete(
+        f"/room/{room['id']}/members/{unknown_id}",
+        headers=auth_headers(owner["access_token"]),
+    )
+    assert remove_unknown.status_code == 400
+
+
 def test_message_read_state_and_unread_counts(client: TestClient):
     owner = register_user(client, "read-owner")
     member = register_user(client, "read-member")

@@ -43,12 +43,6 @@ class MessageService:
             raise HTTPException(status_code=404, detail="Room not found")
         return room
 
-    async def _get_sender_or_404(self, sender_id: str) -> User:
-        sender = await User.find_one(User.id == sender_id)
-        if not sender:
-            raise HTTPException(status_code=404, detail="Sender not found")
-        return sender
-
     async def _get_user_or_404(self, user_id: str) -> User:
         user = await User.find_one(User.id == user_id)
         if not user:
@@ -115,6 +109,10 @@ class MessageService:
     @staticmethod
     def _room_ref(room: ChatRoom):
         return linked_document_ref(ChatRoom.Settings.name, room.id)
+
+    @staticmethod
+    def _user_ref(user: User):
+        return linked_document_ref(User.Settings.name, user.id)
 
     async def _index_message(self, message: Message, *, text: str) -> None:
         await self.typesense.upsert_message(
@@ -245,35 +243,27 @@ class MessageService:
         room_id = linked_document_id(message.room)
         await self.room_service.get_for_user(room_id, user_id)
         user = await self._get_user_or_404(user_id)
-
-        if any(linked_document_id(reader) == user_id for reader in message.read_by):
-            return self._serialize_message(message)
-
-        message.read_by.append(user)
-        await message.save()
-        return self._serialize_message(message)
+        await Message.get_motor_collection().update_one(
+            {"_id": message.id},
+            {"$addToSet": {"read_by": self._user_ref(user)}},
+        )
+        updated_message = await self._get_message_or_404(message_id)
+        return self._serialize_message(updated_message)
 
     async def mark_room_read(self, room_id: str, user_id: str) -> MarkRoomReadResponse:
         room = await self.room_service.get_for_user(room_id, user_id)
         user = await self._get_user_or_404(user_id)
-        user_ref = linked_document_ref(User.Settings.name, user.id)
-
-        messages = await Message.find(
+        user_ref = self._user_ref(user)
+        result = await Message.get_motor_collection().update_many(
             {
                 "room": self._room_ref(room),
                 "is_deleted": False,
+                "sender": {"$ne": user_ref},
                 "read_by": {"$ne": user_ref},
-            }
-        ).to_list()
-        marked_count = 0
-        for message in messages:
-            if any(linked_document_id(reader) == user_id for reader in message.read_by):
-                continue
-            message.read_by.append(user)
-            await message.save()
-            marked_count += 1
-
-        return MarkRoomReadResponse(marked_count=marked_count)
+            },
+            {"$addToSet": {"read_by": user_ref}},
+        )
+        return MarkRoomReadResponse(marked_count=result.modified_count)
 
     async def get_unread_counts(
         self,

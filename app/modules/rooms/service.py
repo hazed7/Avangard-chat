@@ -168,13 +168,13 @@ class RoomService:
         if not user:
             raise HTTPException(status_code=400, detail="One or more members not found")
 
-        if any(linked_document_id(member) == user_id for member in room.members):
-            return room
-
-        room.members.append(user)
-        await room.save()
+        user_ref = linked_document_ref(User.Settings.name, user.id)
+        await ChatRoom.get_motor_collection().update_one(
+            {"_id": room.id},
+            {"$addToSet": {"members": user_ref}},
+        )
         await self.dragonfly.invalidate_room_access_cache(str(room.id))
-        return room
+        return await self._get_room_or_404(room_id)
 
     async def remove_group_member(
         self, room_id: str, user_id: str, actor_id: str
@@ -190,13 +190,14 @@ class RoomService:
                 detail="Cannot remove room creator from members",
             )
 
-        member_ids = [linked_document_id(member) for member in room.members]
-        if user_id not in member_ids:
-            return room
+        user = await User.find_one(User.id == user_id)
+        if not user:
+            raise HTTPException(status_code=400, detail="One or more members not found")
 
-        room.members = [
-            member for member in room.members if linked_document_id(member) != user_id
-        ]
-        await room.save()
+        user_ref = linked_document_ref(User.Settings.name, user.id)
+        await ChatRoom.get_motor_collection().update_one(
+            {"_id": room.id},
+            {"$pull": {"members": user_ref}},
+        )
         await self.dragonfly.invalidate_room_access_cache(str(room.id))
-        return room
+        return await self._get_room_or_404(room_id)
