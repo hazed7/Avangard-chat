@@ -8,7 +8,13 @@ class InMemoryRateLimiter:
     def __init__(self):
         self._buckets: dict[str, deque[float]] = defaultdict(deque)
 
-    def check(self, bucket_key: str, limit: int, window_seconds: int) -> None:
+    def check(
+        self,
+        bucket_key: str,
+        limit: int,
+        window_seconds: int,
+        detail: str = "Too many authentication attempts. Try again later.",
+    ) -> None:
         now = monotonic()
         bucket = self._buckets[bucket_key]
 
@@ -18,10 +24,11 @@ class InMemoryRateLimiter:
         if len(bucket) >= limit:
             raise HTTPException(
                 status_code=429,
-                detail="Too many authentication attempts. Try again later.",
+                detail=detail,
             )
 
         bucket.append(now)
 
 
 auth_rate_limiter = InMemoryRateLimiter()
+ws_message_rate_limiter = InMemoryRateLimiter()

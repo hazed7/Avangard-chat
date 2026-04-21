@@ -2,6 +2,7 @@ import pytest
 from fastapi.testclient import TestClient
 from starlette.websockets import WebSocketDisconnect
 
+from app.config import settings
 from app.ws.manager import manager
 from tests.test_access_control import create_room
 from tests.test_auth import auth_headers, register_user
@@ -103,6 +104,46 @@ def test_websocket_disconnect_cleans_up_empty_room(client: TestClient):
     )
 
     assert room["id"] not in manager.rooms
+
+
+def test_websocket_rate_limit_blocks_spam(
+    client: TestClient,
+    monkeypatch: pytest.MonkeyPatch,
+):
+    monkeypatch.setattr(settings, "ws_rate_limit_max_messages", 2)
+    monkeypatch.setattr(settings, "ws_rate_limit_window_seconds", 60)
+
+    owner = register_user(client, "ws-rate-limit-owner")
+    room = create_room(
+        client,
+        owner["access_token"],
+        member_ids=[],
+        name="ws-rate-limit-room",
+    )
+
+    with client.websocket_connect(
+        _ws_url(room["id"]),
+        subprotocols=_ws_subprotocols(owner["access_token"]),
+    ) as ws:
+        ws.send_json({"text": "one"})
+        first_event = ws.receive_json()
+        assert first_event["type"] == "message"
+
+        ws.send_json({"text": "two"})
+        second_event = ws.receive_json()
+        assert second_event["type"] == "message"
+
+        ws.send_json({"text": "three"})
+        error_event = ws.receive_json()
+        assert error_event == {
+            "type": "error",
+            "detail": "Too many websocket messages. Slow down.",
+        }
+
+        with pytest.raises(WebSocketDisconnect) as exc_info:
+            ws.receive_json()
+
+    assert exc_info.value.code == 1008
     with client.websocket_connect(
         _ws_url(room["id"]),
         subprotocols=_ws_subprotocols(owner["access_token"]),

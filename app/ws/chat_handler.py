@@ -2,7 +2,9 @@ from fastapi import HTTPException, WebSocket, WebSocketDisconnect
 from fastapi.encoders import jsonable_encoder
 from pydantic import ValidationError
 
+from app.config import settings
 from app.dependencies import verify_token
+from app.rate_limit import ws_message_rate_limiter
 from app.schema.message import MessageCreate
 from app.service.message_service import MessageService
 from app.service.room_service import RoomService
@@ -43,6 +45,19 @@ async def handle_room_chat(websocket: WebSocket, room_id: str) -> None:
     try:
         while True:
             data = await websocket.receive_json()
+
+            try:
+                ws_message_rate_limiter.check(
+                    bucket_key=f"ws-message:{room_id}:{payload['sub']}",
+                    limit=settings.ws_rate_limit_max_messages,
+                    window_seconds=settings.ws_rate_limit_window_seconds,
+                    detail="Too many websocket messages. Slow down.",
+                )
+            except HTTPException as exc:
+                await websocket.send_json({"type": "error", "detail": exc.detail})
+                await websocket.close(code=1008)
+                break
+
             try:
                 message_input = MessageCreate(
                     room_id=room_id,

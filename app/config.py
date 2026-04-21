@@ -14,6 +14,8 @@ class Settings(BaseSettings):
     refresh_cookie_samesite: str = "lax"
     auth_rate_limit_window_seconds: int = 60
     auth_rate_limit_max_attempts: int = 10
+    ws_rate_limit_window_seconds: int = 5
+    ws_rate_limit_max_messages: int = 20
 
     model_config = SettingsConfigDict(env_file=".env")
 
