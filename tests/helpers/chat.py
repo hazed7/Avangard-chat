@@ -11,9 +11,23 @@ def create_room(
     name: str = "private-room",
 ) -> dict:
     response = client.post(
-        "/room",
+        "/room/group",
         headers=auth_headers(access_token),
-        json={"name": name, "is_group": True, "member_ids": member_ids},
+        json={"name": name, "member_ids": member_ids},
+    )
+    assert response.status_code == 200
+    return response.json()
+
+
+def create_dm(
+    client: TestClient,
+    access_token: str,
+    user_id: str,
+) -> dict:
+    response = client.post(
+        "/room/dm",
+        headers=auth_headers(access_token),
+        json={"user_id": user_id},
     )
     assert response.status_code == 200
     return response.json()

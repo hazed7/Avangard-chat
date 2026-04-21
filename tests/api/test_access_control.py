@@ -225,7 +225,9 @@ def test_users_can_only_list_their_own_rooms(client: TestClient):
         headers=auth_headers(alice["access_token"]),
     )
     assert own_rooms_response.status_code == 200
-    assert len(own_rooms_response.json()) == 1
+    own_rooms = own_rooms_response.json()
+    assert len(own_rooms["groups"]) == 1
+    assert own_rooms["dms"] == []
 
     other_rooms_response = client.get(
         f"/room/user/{alice['user']['id']}",
