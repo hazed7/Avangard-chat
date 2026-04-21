@@ -1,8 +1,10 @@
+import asyncio
 import os
 from uuid import uuid4
 
 os.environ.setdefault("MONGODB_URL", "mongodb://unused-for-tests")
 os.environ.setdefault("DB_NAME", "test_db")
+os.environ.setdefault("DRAGONFLY_URL", "redis://localhost:6379/15")
 os.environ.setdefault("JWT_SECRET_KEY", "test-access-secret")
 os.environ.setdefault("REFRESH_TOKEN_SECRET_KEY", "test-refresh-secret")
 
@@ -11,17 +13,22 @@ from beanie import init_beanie
 from fastapi.testclient import TestClient
 from mongomock_motor import AsyncMongoMockClient
 
+from app.config import settings
+from app.dragonfly.container import get_dragonfly_adapter_singleton
 from app.main import app
 from app.model.chat_room import ChatRoom
 from app.model.message import Message
-from app.model.refresh_session import RefreshSession
 from app.model.user import User
-from app.rate_limit import (
-    auth_rate_limiter,
-    ws_connection_rate_limiter,
-    ws_message_rate_limiter,
-)
 from app.ws.manager import manager
+
+
+async def _clear_dragonfly_keys() -> None:
+    adapter = get_dragonfly_adapter_singleton()
+    await adapter.startup()
+    try:
+        await adapter.delete_by_pattern(f"{settings.dragonfly_key_prefix}:*")
+    finally:
+        await adapter.shutdown()
 
 
 @pytest.fixture()
@@ -32,17 +39,14 @@ def client(monkeypatch: pytest.MonkeyPatch) -> TestClient:
     async def init_test_db() -> None:
         await init_beanie(
             database=mongo_client[db_name],
-            document_models=[User, Message, ChatRoom, RefreshSession],
+            document_models=[User, Message, ChatRoom],
         )
 
-    auth_rate_limiter._buckets.clear()
-    ws_connection_rate_limiter._buckets.clear()
-    ws_message_rate_limiter._buckets.clear()
+    asyncio.run(_clear_dragonfly_keys())
     manager.rooms.clear()
     monkeypatch.setattr("app.main.init_db", init_test_db)
 
     with TestClient(app) as test_client:
         yield test_client
-    ws_connection_rate_limiter._buckets.clear()
-    ws_message_rate_limiter._buckets.clear()
+    asyncio.run(_clear_dragonfly_keys())
     manager.rooms.clear()

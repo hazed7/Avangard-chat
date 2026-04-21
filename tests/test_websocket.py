@@ -1,3 +1,6 @@
+import time
+from uuid import uuid4
+
 import pytest
 from fastapi.testclient import TestClient
 from starlette.websockets import WebSocketDisconnect
@@ -16,10 +19,13 @@ def _ws_subprotocols(token: str) -> list[str]:
     return ["chat.v1", f"auth.bearer.{token}"]
 
 
-def _ws_create_message_event(text: str) -> dict:
+def _ws_create_message_event(text: str, idempotency_key: str | None = None) -> dict:
     return {
         "type": "chat.message.create",
-        "payload": {"text": text},
+        "payload": {
+            "text": text,
+            "idempotency_key": idempotency_key or uuid4().hex,
+        },
     }
 
 
@@ -126,7 +132,13 @@ def test_websocket_legacy_payload_returns_invalid_event_error(client: TestClient
     }
 
 
-def test_websocket_disconnect_cleans_up_empty_room(client: TestClient):
+def test_websocket_disconnect_cleans_up_empty_room(
+    client: TestClient,
+    monkeypatch: pytest.MonkeyPatch,
+):
+    monkeypatch.setattr(settings, "ws_rate_limit_max_messages", 0)
+    monkeypatch.setattr(settings, "ws_rate_limit_window_seconds", 60)
+
     owner = register_user(client, "ws-cleanup-owner")
     room = create_room(
         client,
@@ -139,9 +151,21 @@ def test_websocket_disconnect_cleans_up_empty_room(client: TestClient):
     with client.websocket_connect(
         _ws_url(room["id"]),
         subprotocols=_ws_subprotocols(owner["access_token"]),
-    ):
+    ) as ws:
+        connected_deadline = time.time() + 1.0
+        while room["id"] not in manager.rooms and time.time() < connected_deadline:
+            time.sleep(0.01)
+
         assert room["id"] in manager.rooms
         assert len(manager.rooms[room["id"]]) == 1
+        ws.send_json(_ws_create_message_event("cleanup trigger"))
+        assert ws.receive_json()["type"] == "error"
+        with pytest.raises(WebSocketDisconnect):
+            ws.receive_json()
+
+    deadline = time.time() + 2.0
+    while room["id"] in manager.rooms and time.time() < deadline:
+        time.sleep(0.01)
 
     assert room["id"] not in manager.rooms
 
@@ -284,3 +308,34 @@ def test_websocket_idle_timeout_closes_stale_connection(
             ws.receive_json()
 
     assert exc_info.value.code == 1001
+
+
+def test_websocket_idempotency_prevents_duplicate_messages(client: TestClient):
+    owner = register_user(client, "ws-idempotency-owner")
+    room = create_room(
+        client,
+        owner["access_token"],
+        member_ids=[],
+        name="ws-idempotency-room",
+    )
+
+    idem_key = uuid4().hex
+    with client.websocket_connect(
+        _ws_url(room["id"]),
+        subprotocols=_ws_subprotocols(owner["access_token"]),
+    ) as ws:
+        ws.send_json(_ws_create_message_event("idempotent message", idem_key))
+        first_event = ws.receive_json()
+        assert first_event["type"] == "chat.message.created"
+
+        ws.send_json(_ws_create_message_event("idempotent message", idem_key))
+        second_event = ws.receive_json()
+        assert second_event["type"] == "chat.message.created"
+        assert second_event["payload"]["id"] == first_event["payload"]["id"]
+
+    history_response = client.get(
+        f"/message/room/{room['id']}",
+        headers=auth_headers(owner["access_token"]),
+    )
+    assert history_response.status_code == 200
+    assert len(history_response.json()) == 1

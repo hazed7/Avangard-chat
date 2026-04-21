@@ -1,3 +1,4 @@
+import pytest
 from fastapi.testclient import TestClient
 
 from app.config import settings
@@ -138,3 +139,25 @@ def test_protected_endpoint_requires_bearer_token(client: TestClient):
 
     assert response.status_code == 401
     assert response.json()["detail"] == "Missing bearer token"
+
+
+def test_login_rate_limit_returns_429(
+    client: TestClient, monkeypatch: pytest.MonkeyPatch
+):
+    monkeypatch.setattr(settings, "auth_rate_limit_max_attempts", 2)
+    monkeypatch.setattr(settings, "auth_rate_limit_window_seconds", 60)
+
+    register_user(client, "limited-login-user")
+
+    for _ in range(2):
+        response = client.post(
+            "/auth/login",
+            json={"username": "limited-login-user", "password": "wrong-password"},
+        )
+        assert response.status_code == 401
+
+    blocked = client.post(
+        "/auth/login",
+        json={"username": "limited-login-user", "password": "wrong-password"},
+    )
+    assert blocked.status_code == 429

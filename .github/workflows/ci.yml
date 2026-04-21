@@ -10,6 +10,11 @@ jobs:
   build-and-test:
     runs-on: ubuntu-latest
     timeout-minutes: 15
+    services:
+      dragonfly:
+        image: docker.dragonflydb.io/dragonflydb/dragonfly:v1.27.1
+        ports:
+          - 6380:6379
 
     steps:
       - name: Checkout code
@@ -23,6 +28,22 @@ jobs:
         with:
           python-version: "3.12"
 
+      - name: Wait for Dragonfly
+        run: |
+          python - <<'PY'
+          import socket
+          import time
+
+          for _ in range(120):
+              try:
+                  with socket.create_connection(("127.0.0.1", 6380), timeout=1):
+                      break
+              except OSError:
+                  time.sleep(1)
+          else:
+              raise SystemExit("Dragonfly did not become ready in time")
+          PY
+
       - name: Run Ruff
         run: uv run --group dev ruff check .
 
@@ -30,13 +51,15 @@ jobs:
         run: uv run --group dev ruff format --check .
 
       - name: Run tests
+        env:
+          DRAGONFLY_URL: redis://localhost:6380/15
         run: uv run --group dev pytest
 
       - name: Build and wait for all services
         run: docker compose up -d --build --wait --wait-timeout 180
 
       - name: Verify app is reachable
-        run: curl --fail --silent --show-error http://localhost:8000/openapi.json > /dev/null
+        run: curl --fail --silent --show-error http://localhost:8000/health/ready > /dev/null
 
       - name: Check container status
         run: docker compose ps
