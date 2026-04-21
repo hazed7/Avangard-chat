@@ -127,8 +127,41 @@ def test_websocket_legacy_payload_returns_invalid_event_error(client: TestClient
         "type": "error",
         "payload": {
             "code": "invalid_event",
-            "detail": "Expected event: chat.message.create or chat.pong",
+            "detail": (
+                "Expected event: chat.message.create, chat.presence.get or chat.pong"
+            ),
         },
+    }
+
+
+def test_websocket_presence_get_returns_online_members(client: TestClient):
+    owner = register_user(client, "ws-presence-owner")
+    member = register_user(client, "ws-presence-member")
+    room = create_room(
+        client,
+        owner["access_token"],
+        member_ids=[member["user"]["id"]],
+        name="presence-room",
+    )
+
+    with (
+        client.websocket_connect(
+            _ws_url(room["id"]),
+            subprotocols=_ws_subprotocols(owner["access_token"]),
+        ) as owner_ws,
+        client.websocket_connect(
+            _ws_url(room["id"]),
+            subprotocols=_ws_subprotocols(member["access_token"]),
+        ),
+    ):
+        owner_ws.send_json({"type": "chat.presence.get", "payload": {}})
+        snapshot = owner_ws.receive_json()
+
+    assert snapshot["type"] == "chat.presence.snapshot"
+    assert snapshot["payload"]["room_id"] == room["id"]
+    assert set(snapshot["payload"]["online_user_ids"]) == {
+        owner["user"]["id"],
+        member["user"]["id"],
     }
 
 

@@ -18,6 +18,9 @@ from app.schema.ws import (
     WsPingEvent,
     WsPingPayload,
     WsPongEvent,
+    WsPresenceGetEvent,
+    WsPresenceSnapshotEvent,
+    WsPresenceSnapshotPayload,
 )
 from app.service.message_service import MessageService
 from app.service.room_service import RoomService
@@ -25,6 +28,9 @@ from app.ws.manager import manager
 
 AUTH_SUBPROTOCOL_PREFIX = "auth.bearer."
 CHAT_SUBPROTOCOL = "chat.v1"
+EXPECTED_EVENT_DETAIL = (
+    "Expected event: chat.message.create, chat.presence.get or chat.pong"
+)
 
 
 def _extract_bearer_token(subprotocols: list[str]) -> str:
@@ -70,6 +76,24 @@ async def _send_message_created(websocket: WebSocket, payload: dict) -> None:
     await websocket.send_json(
         jsonable_encoder(
             WsMessageCreatedEvent(payload=payload),
+        )
+    )
+
+
+async def _send_presence_snapshot(
+    websocket: WebSocket,
+    room_id: str,
+    dragonfly: DragonflyService,
+) -> None:
+    online_user_ids = await dragonfly.list_room_online_users(room_id)
+    await websocket.send_json(
+        jsonable_encoder(
+            WsPresenceSnapshotEvent(
+                payload=WsPresenceSnapshotPayload(
+                    room_id=room_id,
+                    online_user_ids=online_user_ids,
+                )
+            )
         )
     )
 
@@ -137,17 +161,35 @@ async def handle_room_chat(
                     await _send_error(
                         websocket,
                         code="invalid_event",
-                        detail="Expected event: chat.message.create or chat.pong",
+                        detail=EXPECTED_EVENT_DETAIL,
                     )
                     continue
                 await manager.touch(websocket)
+                continue
+
+            if event_type == "chat.presence.get":
+                try:
+                    WsPresenceGetEvent.model_validate(data)
+                except ValidationError:
+                    await _send_error(
+                        websocket,
+                        code="invalid_event",
+                        detail=EXPECTED_EVENT_DETAIL,
+                    )
+                    continue
+                await manager.touch(websocket)
+                await _send_presence_snapshot(
+                    websocket=websocket,
+                    room_id=room_id,
+                    dragonfly=dragonfly,
+                )
                 continue
 
             if event_type != "chat.message.create":
                 await _send_error(
                     websocket,
                     code="invalid_event",
-                    detail="Expected event: chat.message.create or chat.pong",
+                    detail=EXPECTED_EVENT_DETAIL,
                 )
                 continue
 
@@ -161,7 +203,7 @@ async def handle_room_chat(
                 await _send_error(
                     websocket,
                     code="invalid_event",
-                    detail="Expected event: chat.message.create or chat.pong",
+                    detail=EXPECTED_EVENT_DETAIL,
                 )
                 continue
 

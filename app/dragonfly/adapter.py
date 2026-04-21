@@ -181,6 +181,17 @@ class DragonflyAdapter:
                 break
         return deleted
 
+    async def scan_keys(self, pattern: str) -> list[str]:
+        client = self._require_client()
+        matched_keys: list[str] = []
+        cursor = 0
+        while True:
+            cursor, keys = await client.scan(cursor=cursor, match=pattern, count=500)
+            matched_keys.extend(str(key) for key in keys)
+            if cursor == 0:
+                break
+        return matched_keys
+
     def _require_client(self) -> redis.Redis:
         if self._client is None:
             raise RuntimeError("Dragonfly adapter is not started")

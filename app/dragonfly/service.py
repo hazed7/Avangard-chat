@@ -221,6 +221,30 @@ class DragonflyService:
                 exc=exc,
             )
 
+    async def list_room_online_users(self, room_id: str) -> list[str]:
+        pattern = keys.ws_presence_room_conn_pattern(self._prefix, room_id)
+        try:
+            conn_keys = await self._adapter.scan_keys(pattern)
+        except Exception as exc:  # noqa: BLE001
+            await self._handle_backend_failure(
+                policy=self._settings.dragonfly_fail_policy_ws_presence,
+                feature="ws_presence_list",
+                exc=exc,
+            )
+            return []
+
+        online_users: set[str] = set()
+        for key in conn_keys:
+            parts = key.split(":")
+            try:
+                user_idx = parts.index("user")
+                user_id = parts[user_idx + 1]
+            except (ValueError, IndexError):
+                continue
+            if user_id:
+                online_users.add(user_id)
+        return sorted(online_users)
+
     async def revoke_jti(self, jti: str, ttl_seconds: int) -> None:
         key = keys.auth_revoked_jti(self._prefix, jti)
         try:

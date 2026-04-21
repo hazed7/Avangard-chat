@@ -51,6 +51,10 @@ def ws_presence_room_conn(
     return f"{prefix}:ws:presence:room:{room_id}:user:{user_id}:conn:{connection_id}"
 
 
+def ws_presence_room_conn_pattern(prefix: str, room_id: str) -> str:
+    return f"{prefix}:ws:presence:room:{room_id}:user:*:conn:*"
+
+
 def ws_presence_user_conn(
     prefix: str, user_id: str, room_id: str, connection_id: str
 ) -> str:

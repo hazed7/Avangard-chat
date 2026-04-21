@@ -38,6 +38,21 @@ class WsPongEvent(BaseModel):
     payload: WsPongPayload
 
 
+class WsPresenceGetEvent(BaseModel):
+    type: Literal["chat.presence.get"]
+    payload: dict = Field(default_factory=dict)
+
+
+class WsPresenceSnapshotPayload(BaseModel):
+    room_id: str
+    online_user_ids: list[str]
+
+
+class WsPresenceSnapshotEvent(BaseModel):
+    type: Literal["chat.presence.snapshot"] = "chat.presence.snapshot"
+    payload: WsPresenceSnapshotPayload
+
+
 class WsErrorPayload(BaseModel):
     code: str
     detail: str
