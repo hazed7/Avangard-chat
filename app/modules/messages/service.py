@@ -1,6 +1,7 @@
 import base64
 import json
 from datetime import UTC, datetime
+from time import time
 
 from bson import ObjectId
 from bson.errors import InvalidId
@@ -17,8 +18,10 @@ from app.modules.messages.schemas import (
     UnreadCountsResponse,
     serialize_message_response,
 )
+from app.modules.messages.unread.service import UnreadCounterService
 from app.modules.rooms.model import ChatRoom
 from app.modules.rooms.service import RoomService
+from app.modules.system.cleanup_jobs.service import CleanupJobService
 from app.modules.users.model import User
 from app.platform.backends.dragonfly.service import DragonflyService
 from app.platform.backends.typesense.service import TypesenseService
@@ -37,11 +40,15 @@ class MessageService:
         dragonfly: DragonflyService,
         message_crypto: MessageCrypto,
         typesense: TypesenseService,
+        unread_counters: UnreadCounterService,
+        cleanup_jobs: CleanupJobService,
     ):
         self.room_service = room_service
         self.dragonfly = dragonfly
         self.message_crypto = message_crypto
         self.typesense = typesense
+        self.unread_counters = unread_counters
+        self.cleanup_jobs = cleanup_jobs
 
     async def _get_room_or_404(self, room_id: str) -> ChatRoom:
         room = await ChatRoom.get(room_id)
@@ -124,6 +131,14 @@ class MessageService:
         return linked_document_ref(User.Settings.name, user.id)
 
     @staticmethod
+    def _room_member_ids(room: ChatRoom) -> list[str]:
+        member_ids = [linked_document_id(member) for member in room.members]
+        creator_id = linked_document_id(room.created_by)
+        if creator_id not in member_ids:
+            member_ids.append(creator_id)
+        return member_ids
+
+    @staticmethod
     def _encode_history_cursor(message: Message) -> str:
         payload = {
             "created_at": message.created_at.isoformat(),
@@ -161,6 +176,28 @@ class MessageService:
             raise HTTPException(status_code=400, detail="Invalid cursor")
         return page
 
+    async def _emit_delivery_state(
+        self,
+        *,
+        room_id: str,
+        message_id: str,
+        user_id: str,
+        state: str,
+    ) -> None:
+        await self.dragonfly.publish_room_event(
+            room_id,
+            {
+                "type": "chat.message.delivery.updated",
+                "payload": {
+                    "room_id": room_id,
+                    "message_id": message_id,
+                    "user_id": user_id,
+                    "state": state,
+                    "ts": int(time()),
+                },
+            },
+        )
+
     async def _index_message(self, message: Message, *, text: str) -> None:
         await self.typesense.upsert_message(
             message_id=str(message.id),
@@ -194,6 +231,10 @@ class MessageService:
         await message.insert()
         try:
             await self._index_message(message, text=data.text)
+            await self.unread_counters.increment_for_new_message(
+                room=room,
+                sender_id=sender_id,
+            )
         except HTTPException:
             await message.delete()
             raise
@@ -292,20 +333,29 @@ class MessageService:
     async def delete(self, message_id: str, user_id: str) -> None:
         message = await self._get_message_or_404(message_id)
         await self._ensure_message_owner(message, user_id)
-        previous_is_deleted = message.is_deleted
-        message.is_deleted = True
-        await message.save()
-        try:
-            await self.typesense.delete_message(message_id=message_id)
-        except HTTPException:
-            message.is_deleted = previous_is_deleted
+        was_deleted = message.is_deleted
+        if not was_deleted:
+            room_id = linked_document_id(message.room)
+            room = await self.room_service.get(room_id)
+            if room:
+                sender_id = linked_document_id(message.sender)
+                read_by_ids = {linked_document_id(user) for user in message.read_by}
+                for member_id in self._room_member_ids(room):
+                    if member_id == sender_id or member_id in read_by_ids:
+                        continue
+                    await self.unread_counters.decrement(
+                        room_id=room_id,
+                        user_id=member_id,
+                        by=1,
+                    )
+            message.is_deleted = True
             await message.save()
-            raise
-        await self.dragonfly.invalidate_message_owner_cache(message_id)
+        await self.cleanup_jobs.enqueue_message_delete_cleanup(message_id=message_id)
         logger.info(
-            "event=message.delete user_id=%s message_id=%s",
+            "event=message.delete user_id=%s message_id=%s already_deleted=%s",
             user_id,
             message_id,
+            was_deleted,
         )
 
     async def get_by_id(self, message_id: str) -> MessageResponse:
@@ -317,10 +367,28 @@ class MessageService:
         room_id = linked_document_id(message.room)
         await self.room_service.get_for_user(room_id, user_id)
         user = await self._get_user_or_404(user_id)
-        await Message.get_motor_collection().update_one(
-            {"_id": message.id},
-            {"$addToSet": {"read_by": self._user_ref(user)}},
+        user_ref = self._user_ref(user)
+        result = await Message.get_motor_collection().update_one(
+            {
+                "_id": message.id,
+                "is_deleted": False,
+                "sender": {"$ne": user_ref},
+                "read_by": {"$ne": user_ref},
+            },
+            {"$addToSet": {"read_by": user_ref}},
         )
+        if result.modified_count:
+            await self.unread_counters.decrement(
+                room_id=room_id,
+                user_id=user_id,
+                by=1,
+            )
+            await self._emit_delivery_state(
+                room_id=room_id,
+                message_id=message_id,
+                user_id=user_id,
+                state="read",
+            )
         updated_message = await self._get_message_or_404(message_id)
         return self._serialize_message(updated_message)
 
@@ -328,15 +396,38 @@ class MessageService:
         room = await self.room_service.get_for_user(room_id, user_id)
         user = await self._get_user_or_404(user_id)
         user_ref = self._user_ref(user)
+        room_ref = self._room_ref(room)
+        unread_messages = await Message.find(
+            {
+                "room": room_ref,
+                "is_deleted": False,
+                "sender": {"$ne": user_ref},
+                "read_by": {"$ne": user_ref},
+            }
+        ).to_list()
+        unread_ids = [str(message.id) for message in unread_messages]
         result = await Message.get_motor_collection().update_many(
             {
-                "room": self._room_ref(room),
+                "room": room_ref,
                 "is_deleted": False,
                 "sender": {"$ne": user_ref},
                 "read_by": {"$ne": user_ref},
             },
             {"$addToSet": {"read_by": user_ref}},
         )
+        if result.modified_count:
+            await self.unread_counters.decrement(
+                room_id=room_id,
+                user_id=user_id,
+                by=result.modified_count,
+            )
+            for message_id in unread_ids:
+                await self._emit_delivery_state(
+                    room_id=room_id,
+                    message_id=message_id,
+                    user_id=user_id,
+                    state="read",
+                )
         return MarkRoomReadResponse(marked_count=result.modified_count)
 
     async def get_unread_counts(
@@ -345,8 +436,7 @@ class MessageService:
         user_id: str,
         room_id: str | None,
     ) -> UnreadCountsResponse:
-        user = await self._get_user_or_404(user_id)
-        user_ref = linked_document_ref(User.Settings.name, user.id)
+        await self._get_user_or_404(user_id)
 
         rooms: list[ChatRoom]
         if room_id:
@@ -357,26 +447,19 @@ class MessageService:
         if not rooms:
             return UnreadCountsResponse(total=0, by_room=[])
 
-        room_refs = [self._room_ref(room) for room in rooms]
-        room_id_map = {str(room.id): 0 for room in rooms}
-
-        unread_messages = await Message.find(
-            {
-                "room": {"$in": room_refs},
-                "is_deleted": False,
-                "sender": {"$ne": user_ref},
-                "read_by": {"$ne": user_ref},
-            }
-        ).to_list()
-
-        for message in unread_messages:
-            room_id_map[linked_document_id(message.room)] += 1
+        room_ids = [str(room.id) for room in rooms]
+        counts_by_room = await self.unread_counters.get_counts_for_user(
+            user_id=user_id,
+            room_ids=room_ids,
+        )
 
         by_room = [
             RoomUnreadCount(room_id=current_room_id, unread_count=unread_count)
-            for current_room_id, unread_count in room_id_map.items()
+            for current_room_id, unread_count in counts_by_room.items()
             if unread_count > 0 or room_id is not None
         ]
+        if room_id is not None and room_id not in counts_by_room:
+            by_room = [RoomUnreadCount(room_id=room_id, unread_count=0)]
         return UnreadCountsResponse(
             total=sum(item.unread_count for item in by_room),
             by_room=by_room,

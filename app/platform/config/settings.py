@@ -172,6 +172,9 @@ class Settings(BaseSettings):
     ws_rate_limit_max_messages: int = 20
     ws_typing_rate_limit_window_seconds: int = 5
     ws_typing_rate_limit_max_events: int = 30
+    cleanup_job_worker_interval_seconds: int = 1
+    cleanup_job_max_attempts: int = 5
+    unread_reconcile_interval_seconds: int = 300
 
     auth_user_cutoff_ttl_seconds: int = 3600
     auth_refresh_lock_ttl_seconds: int = 5

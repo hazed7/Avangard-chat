@@ -11,6 +11,7 @@ from app.modules.messages.schemas import (
 from app.modules.messages.service import MessageService
 from app.modules.system.dependencies import get_message_service, verify_token
 from app.platform.http.errors import error_responses
+from app.platform.http.schemas import OperationOkResponse
 
 router = APIRouter()
 
@@ -133,11 +134,15 @@ async def edit_message(
     )
 
 
-@router.delete("/{message_id}", responses=error_responses(401, 403, 404))
+@router.delete(
+    "/{message_id}",
+    response_model=OperationOkResponse,
+    responses=error_responses(401, 403, 404),
+)
 async def delete_message(
     message_id: str,
     user: dict = Depends(verify_token),
     message_service: MessageService = Depends(get_message_service),
 ):
     await message_service.delete(message_id=message_id, user_id=user["sub"])
-    return {"ok": True}
+    return OperationOkResponse()

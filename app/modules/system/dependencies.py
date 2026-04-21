@@ -7,7 +7,9 @@ from jwt import InvalidTokenError
 
 from app.modules.auth.service import AuthService
 from app.modules.messages.service import MessageService
+from app.modules.messages.unread.service import UnreadCounterService
 from app.modules.rooms.service import RoomService
+from app.modules.system.cleanup_jobs.service import CleanupJobService
 from app.modules.users.model import User
 from app.platform.backends.dragonfly.container import get_dragonfly_service_singleton
 from app.platform.backends.dragonfly.rate_limit import RateLimitService
@@ -50,6 +52,19 @@ def get_typesense_service() -> TypesenseService:
 @lru_cache
 def get_message_crypto() -> MessageCrypto:
     return MessageCrypto(settings=settings)
+
+
+def get_unread_counter_service() -> UnreadCounterService:
+    return UnreadCounterService()
+
+
+def get_cleanup_job_service() -> CleanupJobService:
+    return CleanupJobService(
+        dragonfly=get_dragonfly_service_singleton(),
+        typesense=get_typesense_service_singleton(),
+        unread_counters=get_unread_counter_service(),
+        max_attempts=settings.cleanup_job_max_attempts,
+    )
 
 
 async def validate_access_token(
@@ -104,8 +119,15 @@ def get_rate_limit_service(
 def get_room_service(
     dragonfly: DragonflyService = Depends(get_dragonfly_service),
     typesense: TypesenseService = Depends(get_typesense_service),
+    unread_counters: UnreadCounterService = Depends(get_unread_counter_service),
+    cleanup_jobs: CleanupJobService = Depends(get_cleanup_job_service),
 ) -> RoomService:
-    return RoomService(dragonfly=dragonfly, typesense=typesense)
+    return RoomService(
+        dragonfly=dragonfly,
+        typesense=typesense,
+        unread_counters=unread_counters,
+        cleanup_jobs=cleanup_jobs,
+    )
 
 
 def get_message_service(
@@ -113,12 +135,16 @@ def get_message_service(
     dragonfly: DragonflyService = Depends(get_dragonfly_service),
     message_crypto: MessageCrypto = Depends(get_message_crypto),
     typesense: TypesenseService = Depends(get_typesense_service),
+    unread_counters: UnreadCounterService = Depends(get_unread_counter_service),
+    cleanup_jobs: CleanupJobService = Depends(get_cleanup_job_service),
 ) -> MessageService:
     return MessageService(
         room_service=room_service,
         dragonfly=dragonfly,
         message_crypto=message_crypto,
         typesense=typesense,
+        unread_counters=unread_counters,
+        cleanup_jobs=cleanup_jobs,
     )
 
 

@@ -74,6 +74,19 @@ class WsTypingUpdatedEvent(BaseModel):
     payload: WsTypingUpdatedPayload
 
 
+class WsMessageDeliveryUpdatedPayload(BaseModel):
+    room_id: str
+    message_id: str
+    user_id: str
+    state: Literal["sent", "delivered", "read"]
+    ts: int
+
+
+class WsMessageDeliveryUpdatedEvent(BaseModel):
+    type: Literal["chat.message.delivery.updated"] = "chat.message.delivery.updated"
+    payload: WsMessageDeliveryUpdatedPayload
+
+
 class WsErrorPayload(BaseModel):
     code: str
     detail: str

@@ -11,6 +11,7 @@ from app.modules.rooms.schemas import (
 from app.modules.rooms.service import RoomService
 from app.modules.system.dependencies import get_room_service, verify_token
 from app.platform.http.errors import error_responses
+from app.platform.http.schemas import OperationOkResponse
 
 router = APIRouter()
 
@@ -117,11 +118,15 @@ async def get_rooms_by_user_id(
     )
 
 
-@router.delete("/{room_id}", responses=error_responses(401, 403, 404))
+@router.delete(
+    "/{room_id}",
+    response_model=OperationOkResponse,
+    responses=error_responses(401, 403),
+)
 async def delete_room(
     room_id: str,
     user: dict = Depends(verify_token),
     room_service: RoomService = Depends(get_room_service),
 ):
     await room_service.delete_room(room_id, user["sub"])
-    return {"ok": True}
+    return OperationOkResponse()

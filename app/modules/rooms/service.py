@@ -3,18 +3,31 @@ from fastapi import HTTPException
 from pymongo.errors import DuplicateKeyError
 
 from app.modules.messages.model import Message
+from app.modules.messages.unread.service import UnreadCounterService
 from app.modules.rooms.model import ChatRoom
 from app.modules.rooms.schemas import DirectRoomCreate, GroupRoomCreate
+from app.modules.system.cleanup_jobs.service import CleanupJobService
 from app.modules.users.model import User
 from app.platform.backends.dragonfly.service import DragonflyService
 from app.platform.backends.typesense.service import TypesenseService
+from app.platform.observability.logger import get_logger
 from app.platform.persistence.links import linked_document_id, linked_document_ref
+
+logger = get_logger("audit")
 
 
 class RoomService:
-    def __init__(self, dragonfly: DragonflyService, typesense: TypesenseService):
+    def __init__(
+        self,
+        dragonfly: DragonflyService,
+        typesense: TypesenseService,
+        unread_counters: UnreadCounterService,
+        cleanup_jobs: CleanupJobService,
+    ):
         self.dragonfly = dragonfly
         self.typesense = typesense
+        self.unread_counters = unread_counters
+        self.cleanup_jobs = cleanup_jobs
 
     @staticmethod
     def _dedupe_preserve_order(items: list[str]) -> list[str]:
@@ -155,19 +168,45 @@ class RoomService:
         return groups, dms
 
     async def delete_room(self, room_id: str, user_id: str) -> None:
-        room = await self._get_room_or_404(room_id)
+        room = await self.get(room_id)
+        if not room:
+            logger.info(
+                "event=room.delete.idempotent actor_id=%s room_id=%s",
+                user_id,
+                room_id,
+            )
+            return
         await self._ensure_room_owner(room, user_id)
 
         room_ref = linked_document_ref(ChatRoom.Settings.name, room.id)
         room_messages = await Message.find({"room": room_ref}).to_list()
         message_ids = [str(message.id) for message in room_messages]
-        for message_id in message_ids:
-            await self.typesense.delete_message(message_id=message_id)
-            await self.dragonfly.invalidate_message_owner_cache(message_id)
 
         await Message.find({"room": room_ref}).delete()
         await room.delete()
-        await self.dragonfly.invalidate_room_access_cache(str(room.id))
+        await self.unread_counters.remove_for_room(str(room.id))
+        await self.cleanup_jobs.enqueue_room_delete_cleanup(
+            room_id=str(room.id),
+            message_ids=message_ids,
+        )
+        logger.info(
+            "event=room.delete actor_id=%s room_id=%s messages=%s",
+            user_id,
+            str(room.id),
+            len(message_ids),
+        )
+
+    async def _compute_room_unread_for_user(self, room: ChatRoom, user_id: str) -> int:
+        room_ref = linked_document_ref(ChatRoom.Settings.name, room.id)
+        user_ref = linked_document_ref(User.Settings.name, user_id)
+        return await Message.get_motor_collection().count_documents(
+            {
+                "room": room_ref,
+                "is_deleted": False,
+                "sender": {"$ne": user_ref},
+                "read_by": {"$ne": user_ref},
+            }
+        )
 
     async def add_group_member(
         self, room_id: str, user_id: str, actor_id: str
@@ -186,7 +225,14 @@ class RoomService:
             {"$addToSet": {"members": user_ref}},
         )
         await self.dragonfly.invalidate_room_access_cache(str(room.id))
-        return await self._get_room_or_404(room_id)
+        updated_room = await self._get_room_or_404(room_id)
+        unread_count = await self._compute_room_unread_for_user(updated_room, user_id)
+        await self.unread_counters.set_exact(
+            room_id=str(updated_room.id),
+            user_id=user_id,
+            unread_count=unread_count,
+        )
+        return updated_room
 
     async def remove_group_member(
         self, room_id: str, user_id: str, actor_id: str
@@ -212,4 +258,8 @@ class RoomService:
             {"$pull": {"members": user_ref}},
         )
         await self.dragonfly.invalidate_room_access_cache(str(room.id))
+        await self.unread_counters.remove_for_room_user(
+            room_id=str(room.id),
+            user_id=user_id,
+        )
         return await self._get_room_or_404(room_id)

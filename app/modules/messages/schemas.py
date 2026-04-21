@@ -1,22 +1,25 @@
 from datetime import datetime
 from typing import List, Optional
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, ConfigDict, Field
 
 from app.modules.messages.model import Message
 from app.platform.persistence.links import linked_document_id
 
 
 class MessageCreate(BaseModel):
+    model_config = ConfigDict(extra="forbid")
     room_id: str
     text: str = Field(min_length=1, max_length=5000)
 
 
 class MessageUpdate(BaseModel):
+    model_config = ConfigDict(extra="forbid")
     text: str = Field(min_length=1, max_length=5000)
 
 
 class MessageResponse(BaseModel):
+    model_config = ConfigDict(extra="forbid")
     id: str
     room_id: str
     sender_id: str
@@ -29,21 +32,25 @@ class MessageResponse(BaseModel):
 
 
 class MessageCursorPageResponse(BaseModel):
+    model_config = ConfigDict(extra="forbid")
     items: List[MessageResponse]
     next_cursor: str | None = None
 
 
 class MarkRoomReadResponse(BaseModel):
+    model_config = ConfigDict(extra="forbid")
     ok: bool = True
     marked_count: int
 
 
 class RoomUnreadCount(BaseModel):
+    model_config = ConfigDict(extra="forbid")
     room_id: str
     unread_count: int
 
 
 class UnreadCountsResponse(BaseModel):
+    model_config = ConfigDict(extra="forbid")
     total: int
     by_room: List[RoomUnreadCount]
 
