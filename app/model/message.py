@@ -11,7 +11,10 @@ from app.model.user import User
 class Message(Document):
     room: Link[ChatRoom]
     sender: Link[User]
-    text: str
+    text_ciphertext: str
+    text_nonce: str
+    text_key_id: str
+    text_aad: str
     is_edited: bool = False
     edited_at: Optional[datetime] = None
     is_deleted: bool = False

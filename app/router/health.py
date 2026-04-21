@@ -1,9 +1,10 @@
 from fastapi import APIRouter, Depends
 from fastapi.responses import JSONResponse
 
-from app.core.dependencies import get_dragonfly_service
+from app.core.dependencies import get_dragonfly_service, get_typesense_service
 from app.dragonfly.service import DragonflyService
 from app.model.user import User
+from app.typesense.service import TypesenseService
 
 router = APIRouter()
 
@@ -16,10 +17,12 @@ async def live() -> dict[str, str]:
 @router.get("/ready")
 async def ready(
     dragonfly: DragonflyService = Depends(get_dragonfly_service),
+    typesense: TypesenseService = Depends(get_typesense_service),
 ):
     checks = {
         "mongodb": True,
         "dragonfly": True,
+        "typesense": True,
     }
 
     try:
@@ -31,6 +34,11 @@ async def ready(
         checks["dragonfly"] = await dragonfly.ping()
     except Exception:  # noqa: BLE001
         checks["dragonfly"] = False
+
+    try:
+        checks["typesense"] = await typesense.ping()
+    except Exception:  # noqa: BLE001
+        checks["typesense"] = False
 
     status = "ok" if all(checks.values()) else "degraded"
     payload = {"status": status, "checks": checks}

@@ -10,7 +10,7 @@ from app.core.config import settings
 from app.core.dependencies import validate_access_token
 from app.dragonfly.rate_limit import RateLimitService
 from app.dragonfly.service import DragonflyService
-from app.schema.message import MessageCreate, serialize_message_response
+from app.schema.message import MessageCreate
 from app.schema.ws import (
     WsErrorEvent,
     WsErrorPayload,
@@ -317,7 +317,7 @@ async def handle_room_chat(
                     )
                     await _send_message_created(
                         websocket,
-                        serialize_message_response(existing_message).model_dump(),
+                        existing_message.model_dump(),
                     )
                     continue
 
@@ -325,7 +325,7 @@ async def handle_room_chat(
                     data=message_input,
                     sender_id=user_id,
                 )
-                message_payload = serialize_message_response(message)
+                message_payload = message
                 typing_cleared = await dragonfly.set_ws_typing_state(
                     room_id=room_id,
                     user_id=user_id,

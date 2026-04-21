@@ -28,13 +28,13 @@ class MessageResponse(BaseModel):
     created_at: datetime
 
 
-def serialize_message_response(message: Message) -> MessageResponse:
+def serialize_message_response(message: Message, *, text: str) -> MessageResponse:
     return MessageResponse.model_validate(
         {
             "id": str(message.id),
             "room_id": linked_document_id(message.room),
             "sender_id": linked_document_id(message.sender),
-            "text": message.text,
+            "text": text,
             "is_edited": message.is_edited,
             "edited_at": message.edited_at,
             "is_deleted": message.is_deleted,

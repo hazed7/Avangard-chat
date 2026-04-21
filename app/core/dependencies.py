@@ -1,9 +1,12 @@
+from functools import lru_cache
 from typing import Optional
 
 from fastapi import Depends, HTTPException
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from jwt import InvalidTokenError
 
+from app.core.config import settings
+from app.core.message_crypto import MessageCrypto
 from app.dragonfly.container import get_dragonfly_service_singleton
 from app.dragonfly.rate_limit import RateLimitService
 from app.dragonfly.service import DragonflyService
@@ -11,6 +14,8 @@ from app.model.user import User
 from app.service.auth_service import AuthService
 from app.service.message_service import MessageService
 from app.service.room_service import RoomService
+from app.typesense.container import get_typesense_service_singleton
+from app.typesense.service import TypesenseService
 
 from .security import decode_access_token
 
@@ -37,6 +42,15 @@ def get_optional_bearer_token(
 
 def get_dragonfly_service() -> DragonflyService:
     return get_dragonfly_service_singleton()
+
+
+def get_typesense_service() -> TypesenseService:
+    return get_typesense_service_singleton()
+
+
+@lru_cache
+def get_message_crypto() -> MessageCrypto:
+    return MessageCrypto(settings=settings)
 
 
 async def validate_access_token(
@@ -97,8 +111,15 @@ def get_room_service(
 def get_message_service(
     room_service: RoomService = Depends(get_room_service),
     dragonfly: DragonflyService = Depends(get_dragonfly_service),
+    message_crypto: MessageCrypto = Depends(get_message_crypto),
+    typesense: TypesenseService = Depends(get_typesense_service),
 ) -> MessageService:
-    return MessageService(room_service=room_service, dragonfly=dragonfly)
+    return MessageService(
+        room_service=room_service,
+        dragonfly=dragonfly,
+        message_crypto=message_crypto,
+        typesense=typesense,
+    )
 
 
 def get_auth_service(

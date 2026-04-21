@@ -6,19 +6,23 @@ from fastapi.openapi.utils import get_openapi
 from app.core.database import init_db
 from app.dragonfly.container import get_dragonfly_service_singleton
 from app.router import auth, health, messages, rooms, users, ws
+from app.typesense.container import get_typesense_service_singleton
 from app.ws.manager import manager
 
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     dragonfly = get_dragonfly_service_singleton()
+    typesense = get_typesense_service_singleton()
     await dragonfly.startup()
+    await typesense.startup()
     try:
         await init_db()
         await manager.startup()
         yield
     finally:
         await manager.shutdown()
+        await typesense.shutdown()
         await dragonfly.shutdown()
 
 
