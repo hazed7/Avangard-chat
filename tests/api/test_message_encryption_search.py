@@ -9,6 +9,7 @@ from app.modules.messages.model import Message
 from app.modules.messages.unread.service import UnreadCounterService
 from app.modules.system import dependencies
 from app.modules.system.cleanup_jobs.model import CleanupJob
+from app.platform.config.settings import settings
 from tests.helpers.auth import auth_headers, register_user
 from tests.helpers.chat import create_message, create_room
 
@@ -244,6 +245,27 @@ def test_message_search_room_scope_filters_results(client):
     )
     assert scoped.status_code == 200
     assert [item["id"] for item in scoped.json()["items"]] == [message_a["id"]]
+
+
+def test_message_search_rate_limit_returns_429(
+    client,
+    monkeypatch,
+):
+    owner = register_user(client, "search-rate-limit-owner")
+    monkeypatch.setattr(settings, "message_search_rate_limit_max_attempts", 1)
+    monkeypatch.setattr(settings, "message_search_rate_limit_window_seconds", 60)
+
+    first = client.get(
+        "/message/search?q=rate-limit-check",
+        headers=auth_headers(owner["access_token"]),
+    )
+    assert first.status_code == 200
+
+    second = client.get(
+        "/message/search?q=rate-limit-check",
+        headers=auth_headers(owner["access_token"]),
+    )
+    assert second.status_code == 429
 
 
 def test_deleted_message_is_redacted_in_history(client):

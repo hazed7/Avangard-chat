@@ -88,6 +88,12 @@ def test_openapi_auth_includes_conflict_and_rate_limit_error_models(
         == error_ref
     )
 
+    message_search_responses = schema["paths"]["/message/search"]["get"]["responses"]
+    assert (
+        message_search_responses["429"]["content"]["application/json"]["schema"]["$ref"]
+        == error_ref
+    )
+
 
 def test_health_ready_returns_ok_when_dependencies_are_healthy(
     client: TestClient,

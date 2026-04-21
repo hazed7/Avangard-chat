@@ -259,6 +259,21 @@ def test_enforce_auth_throttle_without_username_skips_user_counter() -> None:
     assert "test-prefix:abuse:auth:user:" not in ",".join(incr_keys)
 
 
+def test_enforce_message_search_rate_limit_uses_user_scoped_key() -> None:
+    adapter = FakeAdapter()
+    service = _service(adapter)
+
+    asyncio.run(
+        service.enforce_message_search_rate_limit(
+            user_id="user-1",
+        )
+    )
+
+    incr_calls = [call for call in adapter.calls if call[0] == "incr_with_window"]
+    assert len(incr_calls) == 1
+    assert incr_calls[0][1] == "test-prefix:rl:message:search:user-1"
+
+
 def test_list_room_online_users_returns_sorted_unique_ids() -> None:
     adapter = FakeAdapter()
     now = int(datetime.now(UTC).timestamp())
