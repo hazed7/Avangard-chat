@@ -36,6 +36,32 @@ def _ws_set_typing_event(is_typing: bool) -> dict:
     }
 
 
+def _ws_receive_until(ws, event_type: str) -> dict:  # noqa: ANN001
+    while True:
+        event = ws.receive_json()
+        if event.get("type") == event_type:
+            return event
+
+
+def _ws_receive_delivery_states(ws, message_id: str, expected_states: set[str]) -> None:  # noqa: ANN001
+    received: set[str] = set()
+    while received != expected_states:
+        event = ws.receive_json()
+        if event.get("type") != "chat.message.delivery.updated":
+            continue
+        payload = event.get("payload", {})
+        if payload.get("message_id") != message_id:
+            continue
+        received.add(payload.get("state"))
+
+
+def _ws_receive_until_error(ws) -> dict:  # noqa: ANN001
+    while True:
+        event = ws.receive_json()
+        if event.get("type") == "error":
+            return event
+
+
 def test_websocket_messages_are_broadcast_and_persisted(client: TestClient):
     owner = register_user(client, "ws-owner")
     member = register_user(client, "ws-member")
@@ -57,8 +83,8 @@ def test_websocket_messages_are_broadcast_and_persisted(client: TestClient):
         ) as member_ws,
     ):
         owner_ws.send_json(_ws_create_message_event("hello over websocket"))
-        owner_event = owner_ws.receive_json()
-        member_event = member_ws.receive_json()
+        owner_event = _ws_receive_until(owner_ws, "chat.message.created")
+        member_event = _ws_receive_until(member_ws, "chat.message.created")
 
     for event in (owner_event, member_event):
         assert event["type"] == "chat.message.created"
@@ -194,14 +220,14 @@ def test_websocket_typing_is_broadcast_and_cleared_on_message(client: TestClient
         ) as member_ws,
     ):
         owner_ws.send_json(_ws_set_typing_event(True))
-        owner_typing_event = owner_ws.receive_json()
-        member_typing_event = member_ws.receive_json()
+        owner_typing_event = _ws_receive_until(owner_ws, "chat.typing.updated")
+        member_typing_event = _ws_receive_until(member_ws, "chat.typing.updated")
 
         owner_ws.send_json(_ws_create_message_event("typing then send"))
-        owner_typing_cleared = owner_ws.receive_json()
-        owner_message_created = owner_ws.receive_json()
-        member_typing_cleared = member_ws.receive_json()
-        member_message_created = member_ws.receive_json()
+        owner_typing_cleared = _ws_receive_until(owner_ws, "chat.typing.updated")
+        owner_message_created = _ws_receive_until(owner_ws, "chat.message.created")
+        member_typing_cleared = _ws_receive_until(member_ws, "chat.typing.updated")
+        member_message_created = _ws_receive_until(member_ws, "chat.message.created")
 
     for event in (owner_typing_event, member_typing_event):
         assert event["type"] == "chat.typing.updated"
@@ -255,6 +281,69 @@ def test_websocket_typing_rate_limit_returns_error_without_disconnect(
         ws.send_json({"type": "chat.presence.get", "payload": {}})
         still_open = ws.receive_json()
         assert still_open["type"] == "chat.presence.snapshot"
+
+
+def test_websocket_emits_message_delivery_states_for_send(client: TestClient):
+    owner = register_user(client, "ws-delivery-owner")
+    member = register_user(client, "ws-delivery-member")
+    room = create_room(
+        client,
+        owner["access_token"],
+        member_ids=[member["user"]["id"]],
+        name="ws-delivery-room",
+    )
+
+    with (
+        client.websocket_connect(
+            _ws_url(room["id"]),
+            subprotocols=_ws_subprotocols(owner["access_token"]),
+        ) as owner_ws,
+        client.websocket_connect(
+            _ws_url(room["id"]),
+            subprotocols=_ws_subprotocols(member["access_token"]),
+        ) as member_ws,
+    ):
+        owner_ws.send_json(_ws_create_message_event("delivery states"))
+        created = _ws_receive_until(owner_ws, "chat.message.created")
+        message_id = created["payload"]["id"]
+        _ws_receive_delivery_states(owner_ws, message_id, {"sent", "delivered"})
+        _ws_receive_delivery_states(member_ws, message_id, {"sent", "delivered"})
+
+
+def test_websocket_emits_delivery_read_state_on_mark_read(client: TestClient):
+    owner = register_user(client, "ws-read-owner")
+    member = register_user(client, "ws-read-member")
+    room = create_room(
+        client,
+        owner["access_token"],
+        member_ids=[member["user"]["id"]],
+        name="ws-read-room",
+    )
+
+    with (
+        client.websocket_connect(
+            _ws_url(room["id"]),
+            subprotocols=_ws_subprotocols(owner["access_token"]),
+        ) as owner_ws,
+        client.websocket_connect(
+            _ws_url(room["id"]),
+            subprotocols=_ws_subprotocols(member["access_token"]),
+        ),
+    ):
+        owner_ws.send_json(_ws_create_message_event("read state"))
+        created = _ws_receive_until(owner_ws, "chat.message.created")
+        message_id = created["payload"]["id"]
+        _ws_receive_delivery_states(owner_ws, message_id, {"sent", "delivered"})
+
+        mark_read = client.post(
+            f"/message/{message_id}/read",
+            headers=auth_headers(member["access_token"]),
+        )
+        assert mark_read.status_code == 200
+        read_event = _ws_receive_until(owner_ws, "chat.message.delivery.updated")
+        assert read_event["payload"]["message_id"] == message_id
+        assert read_event["payload"]["user_id"] == member["user"]["id"]
+        assert read_event["payload"]["state"] == "read"
 
 
 def test_websocket_disconnect_cleans_up_empty_room():
@@ -312,15 +401,15 @@ def test_websocket_rate_limit_blocks_spam(
         subprotocols=_ws_subprotocols(owner["access_token"]),
     ) as ws:
         ws.send_json(_ws_create_message_event("one"))
-        first_event = ws.receive_json()
+        first_event = _ws_receive_until(ws, "chat.message.created")
         assert first_event["type"] == "chat.message.created"
 
         ws.send_json(_ws_create_message_event("two"))
-        second_event = ws.receive_json()
+        second_event = _ws_receive_until(ws, "chat.message.created")
         assert second_event["type"] == "chat.message.created"
 
         ws.send_json(_ws_create_message_event("three"))
-        error_event = ws.receive_json()
+        error_event = _ws_receive_until_error(ws)
         assert error_event == {
             "type": "error",
             "payload": {
@@ -400,7 +489,7 @@ def test_websocket_heartbeat_ping_and_pong(
             }
         )
         ws.send_json(_ws_create_message_event("after pong"))
-        created_event = ws.receive_json()
+        created_event = _ws_receive_until(ws, "chat.message.created")
         assert created_event["type"] == "chat.message.created"
 
 
@@ -447,11 +536,11 @@ def test_websocket_idempotency_prevents_duplicate_messages(client: TestClient):
         subprotocols=_ws_subprotocols(owner["access_token"]),
     ) as ws:
         ws.send_json(_ws_create_message_event("idempotent message", idem_key))
-        first_event = ws.receive_json()
+        first_event = _ws_receive_until(ws, "chat.message.created")
         assert first_event["type"] == "chat.message.created"
 
         ws.send_json(_ws_create_message_event("idempotent message", idem_key))
-        second_event = ws.receive_json()
+        second_event = _ws_receive_until(ws, "chat.message.created")
         assert second_event["type"] == "chat.message.created"
         assert second_event["payload"]["id"] == first_event["payload"]["id"]
 

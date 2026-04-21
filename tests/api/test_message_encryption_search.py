@@ -1,6 +1,8 @@
 import asyncio
+import time
 
 from app.modules.messages.model import Message
+from app.modules.system.cleanup_jobs.model import CleanupJob
 from tests.helpers.auth import auth_headers, register_user
 from tests.helpers.chat import create_message, create_room
 
@@ -112,12 +114,18 @@ def test_message_delete_removes_it_from_search(client):
     )
     assert delete_response.status_code == 200
 
-    after_delete = client.get(
-        "/message/search?q=keyword-to-delete",
-        headers=auth_headers(owner["access_token"]),
-    )
-    assert after_delete.status_code == 200
-    assert after_delete.json() == {"items": [], "next_cursor": None}
+    after_delete_payload = None
+    for _ in range(30):
+        after_delete = client.get(
+            "/message/search?q=keyword-to-delete",
+            headers=auth_headers(owner["access_token"]),
+        )
+        assert after_delete.status_code == 200
+        after_delete_payload = after_delete.json()
+        if after_delete_payload == {"items": [], "next_cursor": None}:
+            break
+        time.sleep(0.05)
+    assert after_delete_payload == {"items": [], "next_cursor": None}
 
 
 def test_message_search_supports_pagination(client):
@@ -289,3 +297,48 @@ def test_room_delete_cascades_messages_and_search_docs(client):
         headers=auth_headers(owner["access_token"]),
     )
     assert room_search.status_code == 404
+
+
+def test_delete_operations_enqueue_cleanup_jobs(client):
+    owner = register_user(client, "cleanup-job-owner")
+    room = create_room(
+        client,
+        owner["access_token"],
+        member_ids=[],
+        name="cleanup-job-room",
+    )
+    message = create_message(
+        client,
+        owner["access_token"],
+        room["id"],
+        text="cleanup enqueue",
+    )
+
+    delete_message_response = client.delete(
+        f"/message/{message['id']}",
+        headers=auth_headers(owner["access_token"]),
+    )
+    assert delete_message_response.status_code == 200
+
+    message_job = asyncio.run(
+        CleanupJob.get_motor_collection().find_one(
+            {
+                "job_type": "message_delete_cleanup",
+                "payload.message_id": message["id"],
+            }
+        )
+    )
+    assert message_job is not None
+
+    delete_room_response = client.delete(
+        f"/room/{room['id']}",
+        headers=auth_headers(owner["access_token"]),
+    )
+    assert delete_room_response.status_code == 200
+
+    room_job = asyncio.run(
+        CleanupJob.get_motor_collection().find_one(
+            {"job_type": "room_delete_cleanup", "payload.room_id": room["id"]}
+        )
+    )
+    assert room_job is not None
