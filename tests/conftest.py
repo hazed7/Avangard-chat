@@ -20,13 +20,13 @@ from beanie import init_beanie
 from fastapi.testclient import TestClient
 from mongomock_motor import AsyncMongoMockClient
 
-from app.core.config import settings
-from app.dragonfly.container import get_dragonfly_adapter_singleton
 from app.main import app
-from app.model.chat_room import ChatRoom
-from app.model.message import Message
-from app.model.user import User
-from app.ws.manager import manager
+from app.modules.messages.model import Message
+from app.modules.rooms.model import ChatRoom
+from app.modules.users.model import User
+from app.modules.ws.manager import manager
+from app.platform.backends.dragonfly.container import get_dragonfly_adapter_singleton
+from app.platform.config.settings import settings
 
 
 class FakeTypesenseService:
@@ -113,7 +113,7 @@ def client(monkeypatch: pytest.MonkeyPatch) -> TestClient:
         lambda: fake_typesense,
     )
     monkeypatch.setattr(
-        "app.core.dependencies.get_typesense_service_singleton",
+        "app.platform.http.dependencies.get_typesense_service_singleton",
         lambda: fake_typesense,
     )
 

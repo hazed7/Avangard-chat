@@ -3,11 +3,16 @@ from contextlib import asynccontextmanager
 from fastapi import FastAPI
 from fastapi.openapi.utils import get_openapi
 
-from app.core.database import init_db
-from app.dragonfly.container import get_dragonfly_service_singleton
-from app.router import auth, health, messages, rooms, users, ws
-from app.typesense.container import get_typesense_service_singleton
-from app.ws.manager import manager
+from app.modules.auth import router as auth
+from app.modules.messages import router as messages
+from app.modules.rooms import router as rooms
+from app.modules.system import health_router as health
+from app.modules.users import router as users
+from app.modules.ws import router as ws
+from app.modules.ws.manager import manager
+from app.platform.backends.dragonfly.container import get_dragonfly_service_singleton
+from app.platform.backends.typesense.container import get_typesense_service_singleton
+from app.platform.persistence.database import init_db
 
 
 @asynccontextmanager

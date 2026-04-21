@@ -1,7 +1,7 @@
 from fastapi.testclient import TestClient
 
-from app.core.dependencies import get_message_service, verify_token
 from app.main import app
+from app.platform.http.dependencies import get_message_service, verify_token
 
 
 class FakeMessageService:

@@ -5,10 +5,10 @@ from uuid import uuid4
 import pytest
 from fastapi import HTTPException
 
-from app.core.config import settings
-from app.dragonfly import keys
-from app.dragonfly.adapter import DragonflyAdapter
-from app.dragonfly.service import DragonflyService
+from app.platform.backends.dragonfly import keys
+from app.platform.backends.dragonfly.adapter import DragonflyAdapter
+from app.platform.backends.dragonfly.service import DragonflyService
+from app.platform.config.settings import settings
 
 
 async def _make_service(prefix: str) -> tuple[DragonflyService, DragonflyAdapter]:

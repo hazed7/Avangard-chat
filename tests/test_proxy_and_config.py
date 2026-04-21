@@ -1,8 +1,8 @@
 import pytest
 from pydantic import ValidationError
 
-from app.core.client_ip import resolve_client_ip
-from app.core.config import ProxySettings, Settings
+from app.platform.config.settings import ProxySettings, Settings
+from app.platform.http.client_ip import resolve_client_ip
 
 
 def _base_settings_kwargs() -> dict[str, str]:

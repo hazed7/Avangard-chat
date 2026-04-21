@@ -1,6 +1,6 @@
 import asyncio
 
-from app.model.message import Message
+from app.modules.messages.model import Message
 from tests.test_access_control import create_message, create_room
 from tests.test_auth import auth_headers, register_user
 

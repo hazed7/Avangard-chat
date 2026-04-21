@@ -1,7 +1,7 @@
 import pytest
 from fastapi.testclient import TestClient
 
-from app.core.config import settings
+from app.platform.config.settings import settings
 
 
 def register_user(

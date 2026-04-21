@@ -5,9 +5,9 @@ from uuid import uuid4
 
 import pytest
 
-from app.core.config import settings
-from app.typesense.adapter import TypesenseAdapter
-from app.typesense.service import TypesenseService
+from app.platform.backends.typesense.adapter import TypesenseAdapter
+from app.platform.backends.typesense.service import TypesenseService
+from app.platform.config.settings import settings
 
 
 @pytest.mark.integration
