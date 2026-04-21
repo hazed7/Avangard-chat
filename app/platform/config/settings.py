@@ -2,7 +2,7 @@ import base64
 import json
 from typing import Literal
 
-from pydantic import BaseModel, Field, IPvAnyNetwork, field_validator, model_validator
+from pydantic import BaseModel, IPvAnyNetwork, field_validator, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 FailPolicy = Literal["open", "closed"]
@@ -181,11 +181,7 @@ class Settings(BaseSettings):
     authz_cache_ttl_seconds: int = 60
 
     message_encryption_active_key_id: str = "v1"
-    message_encryption_keys: dict[str, str] = Field(
-        default_factory=lambda: {
-            "v1": "MDEyMzQ1Njc4OWFiY2RlZjAxMjM0NTY3ODlhYmNkZWY=",
-        }
-    )
+    message_encryption_keys: dict[str, str]
 
     model_config = SettingsConfigDict(env_file=".env")
 

@@ -5,11 +5,14 @@ from app.platform.config.settings import ProxySettings, Settings
 from app.platform.http.client_ip import resolve_client_ip
 
 
-def _base_settings_kwargs() -> dict[str, str]:
+def _base_settings_kwargs() -> dict[str, object]:
     return {
         "mongodb_url": "mongodb://localhost:27017",
         "jwt_secret_key": "access-secret",
         "refresh_token_secret_key": "refresh-secret",
+        "message_encryption_keys": {
+            "v1": "MDEyMzQ1Njc4OWFiY2RlZjAxMjM0NTY3ODlhYmNkZWY="
+        },
     }
 
 
@@ -83,3 +86,13 @@ def test_settings_accept_trusted_proxy_cidrs_csv() -> None:
         trusted_proxy_cidrs="10.0.0.0/8,192.168.0.0/16",
     )
     assert len(config.trusted_proxy_cidrs) == 2
+
+
+def test_settings_require_message_encryption_keys(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.delenv("MESSAGE_ENCRYPTION_KEYS", raising=False)
+    kwargs = _base_settings_kwargs()
+    kwargs.pop("message_encryption_keys")
+    with pytest.raises(ValidationError):
+        Settings(**kwargs)
