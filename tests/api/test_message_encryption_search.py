@@ -1,8 +1,8 @@
 import asyncio
 
 from app.modules.messages.model import Message
-from tests.test_access_control import create_message, create_room
-from tests.test_auth import auth_headers, register_user
+from tests.helpers.auth import auth_headers, register_user
+from tests.helpers.chat import create_message, create_room
 
 
 def test_messages_are_encrypted_at_rest(client):

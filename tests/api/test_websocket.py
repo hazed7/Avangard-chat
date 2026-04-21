@@ -7,8 +7,8 @@ from starlette.websockets import WebSocketDisconnect
 
 from app.modules.ws.manager import ConnectionContext, ConnectionManager
 from app.platform.config.settings import settings
-from tests.test_access_control import create_room
-from tests.test_auth import auth_headers, register_user
+from tests.helpers.auth import auth_headers, register_user
+from tests.helpers.chat import create_room
 
 
 def _ws_url(room_id: str) -> str:
