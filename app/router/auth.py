@@ -3,8 +3,13 @@ from datetime import UTC, datetime, timedelta
 from fastapi import APIRouter, Depends, Request, Response
 
 from app.config import settings
-from app.dependencies import get_auth_service, verify_token
-from app.rate_limit import auth_rate_limiter
+from app.dependencies import (
+    get_auth_service,
+    get_rate_limit_service,
+    verify_optional_token,
+    verify_token,
+)
+from app.rate_limit import RateLimitService
 from app.schema.auth import AuthResponse, LoginRequest, RegisterRequest, TokenResponse
 from app.schema.user import serialize_user_response
 from app.service.auth_service import AuthService
@@ -45,12 +50,13 @@ async def register(
     request: Request,
     response: Response,
     auth_service: AuthService = Depends(get_auth_service),
+    rate_limit_service: RateLimitService = Depends(get_rate_limit_service),
 ):
     client_ip = _client_ip(request)
-    auth_rate_limiter.check(
-        bucket_key=f"register:{client_ip}",
-        limit=settings.auth_rate_limit_max_attempts,
-        window_seconds=settings.auth_rate_limit_window_seconds,
+    await rate_limit_service.enforce_auth_route(
+        route="register",
+        ip=client_ip,
+        username=data.username,
     )
     user, access_token, refresh_token = await auth_service.register(
         data=data,
@@ -70,12 +76,13 @@ async def login(
     request: Request,
     response: Response,
     auth_service: AuthService = Depends(get_auth_service),
+    rate_limit_service: RateLimitService = Depends(get_rate_limit_service),
 ):
     client_ip = _client_ip(request)
-    auth_rate_limiter.check(
-        bucket_key=f"login:{client_ip}:{data.username}",
-        limit=settings.auth_rate_limit_max_attempts,
-        window_seconds=settings.auth_rate_limit_window_seconds,
+    await rate_limit_service.enforce_auth_route(
+        route="login",
+        ip=client_ip,
+        username=data.username,
     )
     user, access_token, refresh_token = await auth_service.login(
         data=data,
@@ -94,12 +101,12 @@ async def refresh(
     request: Request,
     response: Response,
     auth_service: AuthService = Depends(get_auth_service),
+    rate_limit_service: RateLimitService = Depends(get_rate_limit_service),
 ):
     client_ip = _client_ip(request)
-    auth_rate_limiter.check(
-        bucket_key=f"refresh:{client_ip}",
-        limit=settings.auth_rate_limit_max_attempts,
-        window_seconds=settings.auth_rate_limit_window_seconds,
+    await rate_limit_service.enforce_auth_route(
+        route="refresh",
+        ip=client_ip,
     )
     refresh_token = request.cookies.get(settings.refresh_cookie_name)
     _, access_token, new_refresh_token = await auth_service.refresh(
@@ -116,8 +123,11 @@ async def logout(
     request: Request,
     response: Response,
     auth_service: AuthService = Depends(get_auth_service),
+    token: dict | None = Depends(verify_optional_token),
 ):
     await auth_service.logout(request.cookies.get(settings.refresh_cookie_name))
+    if token:
+        await auth_service.revoke_access_token(token)
     _clear_refresh_cookie(response)
     return {"ok": True}
 
@@ -129,6 +139,8 @@ async def logout_all(
     token: dict = Depends(verify_token),
     auth_service: AuthService = Depends(get_auth_service),
 ):
+    await auth_service.revoke_access_token(token)
+    await auth_service.set_user_access_cutoff(token["sub"])
     await auth_service.revoke_all_user_sessions(token["sub"])
     await auth_service.logout(request.cookies.get(settings.refresh_cookie_name))
     _clear_refresh_cookie(response)

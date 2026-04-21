@@ -2,6 +2,7 @@ from datetime import UTC, datetime
 
 from fastapi import HTTPException
 
+from app.dragonfly.service import DragonflyService
 from app.links import linked_document_id, linked_document_ref
 from app.model.chat_room import ChatRoom
 from app.model.message import Message
@@ -11,8 +12,9 @@ from app.service.room_service import RoomService
 
 
 class MessageService:
-    def __init__(self, room_service: RoomService):
+    def __init__(self, room_service: RoomService, dragonfly: DragonflyService):
         self.room_service = room_service
+        self.dragonfly = dragonfly
 
     async def _get_room_or_404(self, room_id: str) -> ChatRoom:
         room = await ChatRoom.get(room_id)
@@ -33,7 +35,13 @@ class MessageService:
         return message
 
     async def _ensure_message_owner(self, message: Message, user_id: str) -> None:
-        if linked_document_id(message.sender) != user_id:
+        message_id = str(message.id)
+        cached_owner = await self.dragonfly.get_message_owner_cache(message_id)
+        if cached_owner is None:
+            cached_owner = linked_document_id(message.sender)
+            await self.dragonfly.set_message_owner_cache(message_id, cached_owner)
+
+        if cached_owner != user_id:
             raise HTTPException(
                 status_code=403,
                 detail="You do not have permission to modify this message",
@@ -71,3 +79,7 @@ class MessageService:
         await self._ensure_message_owner(message, user_id)
         message.is_deleted = True
         await message.save()
+        await self.dragonfly.invalidate_message_owner_cache(message_id)
+
+    async def get_by_id(self, message_id: str) -> Message:
+        return await self._get_message_or_404(message_id)
