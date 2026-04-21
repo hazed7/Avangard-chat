@@ -90,8 +90,9 @@ class TypesenseAdapter:
         collection: str,
         query: str,
         filter_by: str,
+        page: int = 1,
         per_page: int,
-    ) -> list[dict[str, Any]]:
+    ) -> tuple[list[dict[str, Any]], int]:
         response = await self._require_client().get(
             f"/collections/{collection}/documents/search",
             params={
@@ -99,7 +100,7 @@ class TypesenseAdapter:
                 "query_by": "text",
                 "filter_by": filter_by,
                 "sort_by": "created_at:desc",
-                "page": 1,
+                "page": page,
                 "per_page": per_page,
             },
         )
@@ -111,7 +112,10 @@ class TypesenseAdapter:
             document = hit.get("document")
             if isinstance(document, dict):
                 documents.append(document)
-        return documents
+        found = payload.get("found", 0)
+        if not isinstance(found, int):
+            found = 0
+        return documents, found
 
     def _require_client(self) -> httpx.AsyncClient:
         if self._client is None:

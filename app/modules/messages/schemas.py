@@ -28,6 +28,11 @@ class MessageResponse(BaseModel):
     created_at: datetime
 
 
+class MessageCursorPageResponse(BaseModel):
+    items: List[MessageResponse]
+    next_cursor: str | None = None
+
+
 class MarkRoomReadResponse(BaseModel):
     ok: bool = True
     marked_count: int

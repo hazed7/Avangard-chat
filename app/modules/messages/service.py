@@ -1,11 +1,16 @@
+import base64
+import json
 from datetime import UTC, datetime
 
+from bson import ObjectId
+from bson.errors import InvalidId
 from fastapi import HTTPException
 
 from app.modules.messages.model import Message
 from app.modules.messages.schemas import (
     MarkRoomReadResponse,
     MessageCreate,
+    MessageCursorPageResponse,
     MessageResponse,
     MessageUpdate,
     RoomUnreadCount,
@@ -22,6 +27,7 @@ from app.platform.persistence.links import linked_document_id, linked_document_r
 from app.platform.security.message_crypto import MessageCrypto
 
 logger = get_logger("audit")
+DELETED_MESSAGE_TEXT = "[deleted]"
 
 
 class MessageService:
@@ -103,7 +109,10 @@ class MessageService:
     def _serialize_message(
         self, message: Message, *, text: str | None = None
     ) -> MessageResponse:
-        decrypted_text = text if text is not None else self._decrypt_text(message)
+        if message.is_deleted:
+            decrypted_text = DELETED_MESSAGE_TEXT
+        else:
+            decrypted_text = text if text is not None else self._decrypt_text(message)
         return serialize_message_response(message, text=decrypted_text)
 
     @staticmethod
@@ -113,6 +122,44 @@ class MessageService:
     @staticmethod
     def _user_ref(user: User):
         return linked_document_ref(User.Settings.name, user.id)
+
+    @staticmethod
+    def _encode_history_cursor(message: Message) -> str:
+        payload = {
+            "created_at": message.created_at.isoformat(),
+            "message_id": str(message.id),
+        }
+        raw = json.dumps(payload, separators=(",", ":")).encode()
+        return base64.urlsafe_b64encode(raw).decode()
+
+    @staticmethod
+    def _decode_history_cursor(cursor: str) -> tuple[datetime, ObjectId]:
+        try:
+            decoded = base64.urlsafe_b64decode(cursor.encode()).decode()
+            payload = json.loads(decoded)
+            created_at = datetime.fromisoformat(payload["created_at"])
+            message_id = ObjectId(payload["message_id"])
+            return created_at, message_id
+        except (ValueError, KeyError, TypeError, InvalidId, json.JSONDecodeError):
+            raise HTTPException(status_code=400, detail="Invalid cursor")
+
+    @staticmethod
+    def _encode_search_cursor(page: int) -> str:
+        payload = {"page": page}
+        raw = json.dumps(payload, separators=(",", ":")).encode()
+        return base64.urlsafe_b64encode(raw).decode()
+
+    @staticmethod
+    def _decode_search_cursor(cursor: str) -> int:
+        try:
+            decoded = base64.urlsafe_b64decode(cursor.encode()).decode()
+            payload = json.loads(decoded)
+            page = int(payload["page"])
+        except (ValueError, KeyError, TypeError, json.JSONDecodeError):
+            raise HTTPException(status_code=400, detail="Invalid cursor")
+        if page < 1:
+            raise HTTPException(status_code=400, detail="Invalid cursor")
+        return page
 
     async def _index_message(self, message: Message, *, text: str) -> None:
         await self.typesense.upsert_message(
@@ -159,23 +206,50 @@ class MessageService:
         return self._serialize_message(message, text=data.text)
 
     async def get_history(
-        self, room_id: str, user_id: str, limit: int = 50, offset: int = 0
-    ) -> list[MessageResponse]:
+        self,
+        *,
+        room_id: str,
+        user_id: str,
+        limit: int = 50,
+        cursor: str | None = None,
+    ) -> MessageCursorPageResponse:
         room = await self.room_service.get_for_user(room_id, user_id)
+        query: dict = {"room": self._room_ref(room)}
+        if cursor:
+            created_at, message_id = self._decode_history_cursor(cursor)
+            query["$or"] = [
+                {"created_at": {"$gt": created_at}},
+                {"created_at": created_at, "_id": {"$gt": message_id}},
+            ]
+
         messages = await (
-            Message.find({"room": self._room_ref(room)})
+            Message.find(query)
             .sort([("created_at", 1), ("_id", 1)])
-            .skip(offset)
-            .limit(limit)
+            .limit(limit + 1)
             .to_list()
         )
-        return [self._serialize_message(message) for message in messages]
+        has_more = len(messages) > limit
+        page_items = messages[:limit]
+        next_cursor = (
+            self._encode_history_cursor(page_items[-1])
+            if has_more and page_items
+            else None
+        )
+        return MessageCursorPageResponse(
+            items=[self._serialize_message(message) for message in page_items],
+            next_cursor=next_cursor,
+        )
 
     async def edit(
         self, message_id: str, data: MessageUpdate, user_id: str
     ) -> MessageResponse:
         message = await self._get_message_or_404(message_id)
         await self._ensure_message_owner(message, user_id)
+        if message.is_deleted:
+            raise HTTPException(
+                status_code=400,
+                detail="Deleted messages cannot be edited",
+            )
 
         previous_ciphertext = message.text_ciphertext
         previous_nonce = message.text_nonce
@@ -315,8 +389,8 @@ class MessageService:
         user_id: str,
         room_id: str | None,
         limit: int,
-        offset: int,
-    ) -> list[MessageResponse]:
+        cursor: str | None,
+    ) -> MessageCursorPageResponse:
         if room_id:
             room = await self.room_service.get_for_user(room_id, user_id)
             room_ids = [str(room.id)]
@@ -324,14 +398,15 @@ class MessageService:
             rooms = await self.room_service.list_all_by_user(user_id)
             room_ids = [str(room.id) for room in rooms]
 
-        message_ids = await self.typesense.search_message_ids(
+        page = self._decode_search_cursor(cursor) if cursor else 1
+        message_ids, has_more = await self.typesense.search_message_ids_by_page(
             query=query,
             room_ids=room_ids,
             limit=limit,
-            offset=offset,
+            page=page,
         )
         if not message_ids:
-            return []
+            return MessageCursorPageResponse(items=[], next_cursor=None)
 
         ordered_messages: list[Message] = []
         for message_id in message_ids:
@@ -341,11 +416,16 @@ class MessageService:
         logger.info(
             (
                 "event=message.search user_id=%s room_scope=%s "
-                "query_len=%s result_count=%s"
+                "query_len=%s result_count=%s page=%s"
             ),
             user_id,
             room_id or "all",
             len(query),
             len(ordered_messages),
+            page,
         )
-        return [self._serialize_message(message) for message in ordered_messages]
+        next_cursor = self._encode_search_cursor(page + 1) if has_more else None
+        return MessageCursorPageResponse(
+            items=[self._serialize_message(message) for message in ordered_messages],
+            next_cursor=next_cursor,
+        )

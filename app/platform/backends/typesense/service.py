@@ -92,7 +92,7 @@ class TypesenseService:
         filter_by = f"room_id:=[{room_filter}] && is_deleted:=false"
 
         try:
-            documents = await self._adapter.search_documents(
+            documents, _ = await self._adapter.search_documents(
                 collection=self._collection,
                 query=query,
                 filter_by=filter_by,
@@ -109,6 +109,40 @@ class TypesenseService:
             if isinstance(message_id, str) and message_id:
                 message_ids.append(message_id)
         return message_ids
+
+    async def search_message_ids_by_page(
+        self,
+        *,
+        query: str,
+        room_ids: list[str],
+        limit: int,
+        page: int,
+    ) -> tuple[list[str], bool]:
+        if not room_ids:
+            return [], False
+
+        room_filter = ",".join(_filter_value(room_id) for room_id in room_ids)
+        filter_by = f"room_id:=[{room_filter}] && is_deleted:=false"
+        try:
+            documents, found = await self._adapter.search_documents(
+                collection=self._collection,
+                query=query,
+                filter_by=filter_by,
+                page=page,
+                per_page=limit,
+            )
+        except Exception as exc:  # noqa: BLE001
+            await self._handle_failure(feature="search_message_ids", exc=exc)
+            return [], False
+
+        message_ids: list[str] = []
+        for document in documents:
+            message_id = document.get("id")
+            if isinstance(message_id, str) and message_id:
+                message_ids.append(message_id)
+
+        has_more = page * limit < found
+        return message_ids, has_more
 
     async def _handle_failure(self, *, feature: str, exc: Exception) -> None:
         policy = self._settings.typesense.fail_policy

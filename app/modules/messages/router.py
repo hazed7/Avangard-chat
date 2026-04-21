@@ -3,6 +3,7 @@ from fastapi import APIRouter, Depends, Query
 from app.modules.messages.schemas import (
     MarkRoomReadResponse,
     MessageCreate,
+    MessageCursorPageResponse,
     MessageResponse,
     MessageUpdate,
     UnreadCountsResponse,
@@ -29,13 +30,13 @@ async def send_message(
 
 @router.get(
     "/room/{room_id}",
-    response_model=list[MessageResponse],
-    responses=error_responses(401, 403, 404, 422),
+    response_model=MessageCursorPageResponse,
+    responses=error_responses(400, 401, 403, 404, 422),
 )
 async def get_history(
     room_id: str,
     limit: int = Query(50, ge=1, le=100),
-    offset: int = Query(0, ge=0),
+    cursor: str | None = Query(default=None),
     user: dict = Depends(verify_token),
     message_service: MessageService = Depends(get_message_service),
 ):
@@ -43,20 +44,20 @@ async def get_history(
         room_id=room_id,
         user_id=user["sub"],
         limit=limit,
-        offset=offset,
+        cursor=cursor,
     )
 
 
 @router.get(
     "/search",
-    response_model=list[MessageResponse],
-    responses=error_responses(401, 403, 404, 422),
+    response_model=MessageCursorPageResponse,
+    responses=error_responses(400, 401, 403, 404, 422),
 )
 async def search_messages(
     q: str = Query(..., min_length=1, max_length=5000),
     room_id: str | None = Query(default=None),
     limit: int = Query(20, ge=1, le=100),
-    offset: int = Query(0, ge=0),
+    cursor: str | None = Query(default=None),
     user: dict = Depends(verify_token),
     message_service: MessageService = Depends(get_message_service),
 ):
@@ -65,7 +66,7 @@ async def search_messages(
         user_id=user["sub"],
         room_id=room_id,
         limit=limit,
-        offset=offset,
+        cursor=cursor,
     )
 
 
