@@ -4,6 +4,7 @@ from app.modules.rooms.schemas import (
     ChatRoomResponse,
     DirectRoomCreate,
     GroupRoomCreate,
+    GroupRoomMemberUpdate,
     UserRoomsResponse,
     serialize_chat_room_response,
 )
@@ -53,6 +54,44 @@ async def get_room(
     room_service: RoomService = Depends(get_room_service),
 ):
     room = await room_service.get_for_user(room_id, user["sub"])
+    return serialize_chat_room_response(room)
+
+
+@router.post(
+    "/{room_id}/members",
+    response_model=ChatRoomResponse,
+    responses=error_responses(400, 401, 403, 404, 422),
+)
+async def add_group_member(
+    room_id: str,
+    data: GroupRoomMemberUpdate,
+    user: dict = Depends(verify_token),
+    room_service: RoomService = Depends(get_room_service),
+):
+    room = await room_service.add_group_member(
+        room_id=room_id,
+        user_id=data.user_id,
+        actor_id=user["sub"],
+    )
+    return serialize_chat_room_response(room)
+
+
+@router.delete(
+    "/{room_id}/members/{user_id}",
+    response_model=ChatRoomResponse,
+    responses=error_responses(400, 401, 403, 404),
+)
+async def remove_group_member(
+    room_id: str,
+    user_id: str,
+    user: dict = Depends(verify_token),
+    room_service: RoomService = Depends(get_room_service),
+):
+    room = await room_service.remove_group_member(
+        room_id=room_id,
+        user_id=user_id,
+        actor_id=user["sub"],
+    )
     return serialize_chat_room_response(room)
 
 

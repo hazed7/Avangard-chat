@@ -18,6 +18,11 @@ class DirectRoomCreate(BaseModel):
     user_id: str
 
 
+class GroupRoomMemberUpdate(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    user_id: str
+
+
 class ChatRoomResponse(BaseModel):
     id: str
     name: Optional[str] = None

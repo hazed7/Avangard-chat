@@ -120,6 +120,14 @@ class RoomService:
                 detail="You do not have permission to delete this room",
             )
 
+    @staticmethod
+    def _ensure_group_room(room: ChatRoom) -> None:
+        if not room.is_group:
+            raise HTTPException(
+                status_code=400,
+                detail="Direct message rooms do not support member management",
+            )
+
     async def get_for_user(self, room_id: str, user_id: str) -> ChatRoom:
         room = await self._get_room_or_404(room_id)
         await self._ensure_room_access(room, user_id)
@@ -148,3 +156,47 @@ class RoomService:
         await self._ensure_room_owner(room, user_id)
         await room.delete()
         await self.dragonfly.invalidate_room_access_cache(str(room.id))
+
+    async def add_group_member(
+        self, room_id: str, user_id: str, actor_id: str
+    ) -> ChatRoom:
+        room = await self._get_room_or_404(room_id)
+        self._ensure_group_room(room)
+        await self._ensure_room_owner(room, actor_id)
+
+        user = await User.find_one(User.id == user_id)
+        if not user:
+            raise HTTPException(status_code=400, detail="One or more members not found")
+
+        if any(linked_document_id(member) == user_id for member in room.members):
+            return room
+
+        room.members.append(user)
+        await room.save()
+        await self.dragonfly.invalidate_room_access_cache(str(room.id))
+        return room
+
+    async def remove_group_member(
+        self, room_id: str, user_id: str, actor_id: str
+    ) -> ChatRoom:
+        room = await self._get_room_or_404(room_id)
+        self._ensure_group_room(room)
+        await self._ensure_room_owner(room, actor_id)
+
+        creator_id = linked_document_id(room.created_by)
+        if user_id == creator_id:
+            raise HTTPException(
+                status_code=400,
+                detail="Cannot remove room creator from members",
+            )
+
+        member_ids = [linked_document_id(member) for member in room.members]
+        if user_id not in member_ids:
+            return room
+
+        room.members = [
+            member for member in room.members if linked_document_id(member) != user_id
+        ]
+        await room.save()
+        await self.dragonfly.invalidate_room_access_cache(str(room.id))
+        return room
