@@ -2,11 +2,12 @@ import base64
 import json
 from datetime import UTC, datetime
 
+from aiohttp import ClientResponse
 from bson import ObjectId
 from bson.errors import InvalidId
-from fastapi import HTTPException
+from fastapi import HTTPException, UploadFile
 
-from app.modules.messages.model import Message
+from app.modules.messages.model import Message, Attachment
 from app.modules.messages.schemas import (
     MarkRoomReadResponse,
     MessageCreate,
@@ -21,6 +22,7 @@ from app.modules.rooms.model import ChatRoom
 from app.modules.rooms.service import RoomService
 from app.modules.users.model import User
 from app.platform.backends.dragonfly.service import DragonflyService
+from app.platform.backends.s3.service import S3Service, s3_settings
 from app.platform.backends.typesense.service import TypesenseService
 from app.platform.observability.logger import get_logger
 from app.platform.persistence.links import linked_document_id, linked_document_ref
@@ -37,11 +39,13 @@ class MessageService:
         dragonfly: DragonflyService,
         message_crypto: MessageCrypto,
         typesense: TypesenseService,
+        s3_service: S3Service,
     ):
         self.room_service = room_service
         self.dragonfly = dragonfly
         self.message_crypto = message_crypto
         self.typesense = typesense
+        self.s3_service = s3_service
 
     async def _get_room_or_404(self, room_id: str) -> ChatRoom:
         room = await ChatRoom.get(room_id)
@@ -302,6 +306,10 @@ class MessageService:
             await message.save()
             raise
         await self.dragonfly.invalidate_message_owner_cache(message_id)
+        for attachment in message.attachments:
+            await self.s3_service.delete_file(
+                s3_settings.bucket_attachments, attachment.object_path
+            )
         logger.info(
             "event=message.delete user_id=%s message_id=%s",
             user_id,
@@ -428,4 +436,46 @@ class MessageService:
         return MessageCursorPageResponse(
             items=[self._serialize_message(message) for message in ordered_messages],
             next_cursor=next_cursor,
+        )
+
+    async def add_attachment(self, message_id: str, file: UploadFile, user_id: str):
+        message = await self._get_message_or_404(message_id)
+        await self._ensure_message_owner(message, user_id)
+        if message.is_deleted:
+            raise HTTPException(status_code=422, detail="Message is deleted")
+        await message.fetch_link(Message.room)
+        object_path = await self.s3_service.upload_message_attachment(
+            room_id=message.room.id,
+            file=file,
+        )
+        if not object_path:
+            raise HTTPException(
+                status_code=422, detail="Attachment format not supported"
+            )
+        message.attachments.append(
+            Attachment(
+                filename=file.filename,
+                object_path=object_path,
+                content_type=file.content_type,
+            )
+        )
+        await message.save()
+
+        return self._serialize_message(message)
+
+    async def get_attachment(
+        self, message_id: str, attachment_id: str, user_id: str
+    ) -> ClientResponse:
+        message = await self._get_message_or_404(message_id)
+        if message.is_deleted:
+            raise HTTPException(status_code=422, detail="Message is deleted")
+        await self.room_service.get_for_user(linked_document_id(message.room), user_id)
+        attachment = next(
+            (item for item in message.attachments if item.id == attachment_id), None
+        )
+        if not attachment:
+            raise HTTPException(status_code=404, detail="Attachment not found")
+
+        return await self.s3_service.download_file(
+            s3_settings.bucket_attachments, attachment.object_path
         )

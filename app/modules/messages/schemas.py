@@ -3,7 +3,7 @@ from typing import List, Optional
 
 from pydantic import BaseModel, Field
 
-from app.modules.messages.model import Message
+from app.modules.messages.model import Message, Attachment
 from app.platform.persistence.links import linked_document_id
 
 
@@ -16,6 +16,12 @@ class MessageUpdate(BaseModel):
     text: str = Field(min_length=1, max_length=5000)
 
 
+class AttachmentResponse(BaseModel):
+    id: str
+    name: str
+    content_type: str
+
+
 class MessageResponse(BaseModel):
     id: str
     room_id: str
@@ -26,6 +32,7 @@ class MessageResponse(BaseModel):
     is_deleted: bool
     read_by: List[str]
     created_at: datetime
+    attachments: List[AttachmentResponse]
 
 
 class MessageCursorPageResponse(BaseModel):
@@ -48,6 +55,14 @@ class UnreadCountsResponse(BaseModel):
     by_room: List[RoomUnreadCount]
 
 
+def map_attachment(attachment: Attachment) -> AttachmentResponse:
+    return AttachmentResponse(
+        id=attachment.id,
+        name=attachment.filename,
+        content_type=attachment.content_type,
+    )
+
+
 def serialize_message_response(message: Message, *, text: str) -> MessageResponse:
     return MessageResponse.model_validate(
         {
@@ -60,5 +75,8 @@ def serialize_message_response(message: Message, *, text: str) -> MessageRespons
             "is_deleted": message.is_deleted,
             "read_by": [linked_document_id(user) for user in message.read_by],
             "created_at": message.created_at,
+            "attachments": [
+                map_attachment(attachment) for attachment in message.attachments
+            ],
         }
     )

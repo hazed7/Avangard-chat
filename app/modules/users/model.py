@@ -11,7 +11,7 @@ class User(Document):
     username: str
     full_name: str
     password_hash: str
-    avatar_url: Optional[str] = None
+    avatar: Optional[str] = None
     is_online: bool = False
     created_at: datetime = Field(default_factory=lambda: datetime.now(UTC))
     last_time_online: Optional[datetime] = None

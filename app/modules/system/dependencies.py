@@ -12,6 +12,8 @@ from app.modules.users.model import User
 from app.platform.backends.dragonfly.container import get_dragonfly_service_singleton
 from app.platform.backends.dragonfly.rate_limit import RateLimitService
 from app.platform.backends.dragonfly.service import DragonflyService
+from app.platform.backends.s3.container import get_s3_service_singleton
+from app.platform.backends.s3.service import S3Service
 from app.platform.backends.typesense.container import get_typesense_service_singleton
 from app.platform.backends.typesense.service import TypesenseService
 from app.platform.config.settings import settings
@@ -108,17 +110,23 @@ def get_room_service(
     return RoomService(dragonfly=dragonfly, typesense=typesense)
 
 
+def get_s3_service() -> S3Service:
+    return get_s3_service_singleton()
+
+
 def get_message_service(
     room_service: RoomService = Depends(get_room_service),
     dragonfly: DragonflyService = Depends(get_dragonfly_service),
     message_crypto: MessageCrypto = Depends(get_message_crypto),
     typesense: TypesenseService = Depends(get_typesense_service),
+    s3_service: S3Service = Depends(get_s3_service),
 ) -> MessageService:
     return MessageService(
         room_service=room_service,
         dragonfly=dragonfly,
         message_crypto=message_crypto,
         typesense=typesense,
+        s3_service=s3_service,
     )
 
 

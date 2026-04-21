@@ -12,6 +12,7 @@ from app.modules.users import router as users
 from app.modules.ws import router as ws
 from app.modules.ws.manager import manager
 from app.platform.backends.dragonfly.container import get_dragonfly_service_singleton
+from app.platform.backends.s3.container import get_s3_service_singleton
 from app.platform.backends.typesense.container import get_typesense_service_singleton
 
 
@@ -19,10 +20,12 @@ from app.platform.backends.typesense.container import get_typesense_service_sing
 async def lifespan(app: FastAPI):
     dragonfly = get_dragonfly_service_singleton()
     typesense = get_typesense_service_singleton()
+    s3_service = get_s3_service_singleton()
     await dragonfly.startup()
     await typesense.startup()
     try:
         await init_db()
+        await s3_service.init_s3()
         await manager.startup()
         yield
     finally:
@@ -53,7 +56,11 @@ def custom_openapi():
             "type": "http",
             "scheme": "bearer",
             "bearerFormat": "JWT",
-        }
+        },
+        "HTTPBearer": {
+            "type": "http",
+            "scheme": "bearer",
+        },
     }
     schema["security"] = [{"BearerAuth": []}]
     app.openapi_schema = schema

@@ -1,11 +1,19 @@
 from datetime import UTC, datetime
 from typing import List, Optional
+from uuid import uuid4
 
 from beanie import Document, Link
-from pydantic import Field
+from pydantic import Field, BaseModel
 
 from app.modules.rooms.model import ChatRoom
 from app.modules.users.model import User
+
+
+class Attachment(BaseModel):
+    id: str = Field(default_factory=lambda: str(uuid4()))
+    filename: str
+    object_path: str
+    content_type: str
 
 
 class Message(Document):
@@ -20,6 +28,7 @@ class Message(Document):
     is_deleted: bool = False
     read_by: List[Link[User]] = Field(default_factory=list)
     created_at: datetime = Field(default_factory=lambda: datetime.now(UTC))
+    attachments: List[Attachment] = Field(default_factory=list)
 
     class Settings:
         name = "messages"
