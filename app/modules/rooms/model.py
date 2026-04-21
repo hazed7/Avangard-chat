@@ -18,4 +18,5 @@ class ChatRoom(Document):
 
     class Settings:
         name = "chat_rooms"
+        keep_nulls = False
         indexes = [IndexModel("dm_key", unique=True, sparse=True)]
