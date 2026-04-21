@@ -6,6 +6,8 @@ import time
 import pytest
 
 from app.modules.messages.model import Message
+from app.modules.messages.unread.service import UnreadCounterService
+from app.modules.system import dependencies
 from app.modules.system.cleanup_jobs.model import CleanupJob
 from tests.helpers.auth import auth_headers, register_user
 from tests.helpers.chat import create_message, create_room
@@ -424,3 +426,139 @@ def test_delete_operations_enqueue_cleanup_jobs(client):
         )
     )
     assert room_job is not None
+
+
+def test_send_rolls_back_message_and_search_doc_when_unread_increment_fails(
+    client,
+    monkeypatch,
+):
+    owner = register_user(client, "send-rollback-owner")
+    room = create_room(
+        client,
+        owner["access_token"],
+        member_ids=[],
+        name="send-rollback-room",
+    )
+    fake_typesense = dependencies.get_typesense_service_singleton()
+
+    async def fail_increment_for_new_message(self, *, room, sender_id):  # noqa: ANN001
+        raise RuntimeError("unread increment failed")
+
+    monkeypatch.setattr(
+        UnreadCounterService,
+        "increment_for_new_message",
+        fail_increment_for_new_message,
+    )
+
+    with pytest.raises(RuntimeError, match="unread increment failed"):
+        client.post(
+            "/message",
+            headers=auth_headers(owner["access_token"]),
+            json={"room_id": room["id"], "text": "rollback-search-cleanup"},
+        )
+    assert asyncio.run(Message.find({}).to_list()) == []
+    assert fake_typesense._docs == {}
+
+
+def test_edit_rolls_back_db_and_search_doc_on_index_runtime_failure(
+    client,
+    monkeypatch,
+):
+    owner = register_user(client, "edit-rollback-owner")
+    room = create_room(
+        client,
+        owner["access_token"],
+        member_ids=[],
+        name="edit-rollback-room",
+    )
+    message = create_message(
+        client,
+        owner["access_token"],
+        room["id"],
+        text="before-edit-text",
+    )
+    fake_typesense = dependencies.get_typesense_service_singleton()
+    original_upsert = fake_typesense.upsert_message
+    upsert_calls = {"count": 0}
+
+    async def fail_first_upsert(  # noqa: ANN001
+        *,
+        message_id,
+        room_id,
+        sender_id,
+        text,
+        created_at,
+        is_deleted,
+    ):
+        upsert_calls["count"] += 1
+        if upsert_calls["count"] == 1:
+            raise RuntimeError("typesense write failed")
+        await original_upsert(
+            message_id=message_id,
+            room_id=room_id,
+            sender_id=sender_id,
+            text=text,
+            created_at=created_at,
+            is_deleted=is_deleted,
+        )
+
+    monkeypatch.setattr(fake_typesense, "upsert_message", fail_first_upsert)
+
+    with pytest.raises(RuntimeError, match="typesense write failed"):
+        client.patch(
+            f"/message/{message['id']}",
+            headers=auth_headers(owner["access_token"]),
+            json={"text": "after-edit-text"},
+        )
+
+    history_response = client.get(
+        f"/message/room/{room['id']}",
+        headers=auth_headers(owner["access_token"]),
+    )
+    assert history_response.status_code == 200
+    history_item = history_response.json()["items"][0]
+    assert history_item["text"] == "before-edit-text"
+    assert history_item["is_edited"] is False
+    assert fake_typesense._docs[message["id"]]["text"] == "before-edit-text"
+
+
+def test_edit_failure_is_not_silent_when_rollback_save_fails(client, monkeypatch):
+    owner = register_user(client, "edit-rollback-save-owner")
+    room = create_room(
+        client,
+        owner["access_token"],
+        member_ids=[],
+        name="edit-rollback-save-room",
+    )
+    message = create_message(
+        client,
+        owner["access_token"],
+        room["id"],
+        text="rollback-save-before",
+    )
+    fake_typesense = dependencies.get_typesense_service_singleton()
+
+    async def fail_upsert(
+        *, message_id, room_id, sender_id, text, created_at, is_deleted
+    ):  # noqa: ANN001,E501
+        raise RuntimeError("typesense write failed")
+
+    monkeypatch.setattr(fake_typesense, "upsert_message", fail_upsert)
+
+    original_save = Message.save
+    save_calls = {"count": 0}
+
+    async def fail_second_save(self, *args, **kwargs):  # noqa: ANN002, ANN003
+        save_calls["count"] += 1
+        if save_calls["count"] == 2:
+            raise RuntimeError("rollback save failed")
+        return await original_save(self, *args, **kwargs)
+
+    monkeypatch.setattr(Message, "save", fail_second_save)
+
+    with pytest.raises(RuntimeError, match="rollback save failed"):
+        client.patch(
+            f"/message/{message['id']}",
+            headers=auth_headers(owner["access_token"]),
+            json={"text": "rollback-save-after"},
+        )
