@@ -3,7 +3,7 @@ from typing import Any
 
 from fastapi import HTTPException
 
-from app.core.config import Settings
+from app.core.config import FailPolicy, Settings
 from app.core.logger import get_logger
 from app.dragonfly import keys
 from app.dragonfly.adapter import DragonflyAdapter
@@ -34,7 +34,7 @@ class DragonflyService:
         limit: int,
         window_seconds: int,
         detail: str,
-        failure_policy: str,
+        failure_policy: FailPolicy,
     ) -> None:
         try:
             current = await self._adapter.incr_with_window(key, window_seconds)
@@ -594,7 +594,7 @@ class DragonflyService:
     async def _handle_backend_failure(
         self,
         *,
-        policy: str,
+        policy: FailPolicy,
         feature: str,
         exc: Exception,
     ) -> None:
@@ -604,7 +604,7 @@ class DragonflyService:
             policy,
             exc,
         )
-        if policy.lower() != "open":
+        if policy != "open":
             raise HTTPException(
                 status_code=503,
                 detail=f"Temporary backend failure in {feature}",

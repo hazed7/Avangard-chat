@@ -5,6 +5,7 @@ from fastapi import HTTPException, WebSocket, WebSocketDisconnect
 from fastapi.encoders import jsonable_encoder
 from pydantic import ValidationError
 
+from app.core.client_ip import resolve_client_ip
 from app.core.config import settings
 from app.core.dependencies import validate_access_token
 from app.dragonfly.rate_limit import RateLimitService
@@ -129,7 +130,11 @@ async def handle_room_chat(
     dragonfly: DragonflyService,
 ) -> None:
     subprotocols = list(websocket.scope.get("subprotocols", []))
-    client_ip = websocket.client.host if websocket.client else "unknown"
+    client_ip = resolve_client_ip(
+        peer_ip=websocket.client.host if websocket.client else None,
+        headers=websocket.headers,
+        proxy=settings.proxy,
+    )
 
     try:
         await rate_limit_service.enforce_ws_handshake(ip=client_ip)

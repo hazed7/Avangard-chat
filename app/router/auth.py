@@ -2,6 +2,7 @@ from datetime import UTC, datetime, timedelta
 
 from fastapi import APIRouter, Depends, Request, Response
 
+from app.core.client_ip import resolve_client_ip
 from app.core.config import settings
 from app.core.dependencies import (
     get_auth_service,
@@ -18,7 +19,11 @@ router = APIRouter()
 
 
 def _client_ip(request: Request) -> str:
-    return request.client.host if request.client else "unknown"
+    return resolve_client_ip(
+        peer_ip=request.client.host if request.client else None,
+        headers=request.headers,
+        proxy=settings.proxy,
+    )
 
 
 def _set_refresh_cookie(response: Response, refresh_token: str) -> None:

@@ -1,5 +1,10 @@
-from pydantic import BaseModel
+from typing import Literal
+
+from pydantic import BaseModel, IPvAnyNetwork, field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
+
+FailPolicy = Literal["open", "closed"]
+CookieSameSite = Literal["lax", "strict", "none"]
 
 
 class DatabaseSettings(BaseModel):
@@ -13,11 +18,11 @@ class DragonflyTimeoutSettings(BaseModel):
 
 
 class DragonflyFailPolicySettings(BaseModel):
-    rate_limit: str
-    auth_state: str
-    ws_pubsub: str
-    ws_presence: str
-    authz_cache: str
+    rate_limit: FailPolicy
+    auth_state: FailPolicy
+    ws_pubsub: FailPolicy
+    ws_presence: FailPolicy
+    authz_cache: FailPolicy
 
 
 class DragonflySettings(BaseModel):
@@ -38,7 +43,7 @@ class JwtSettings(BaseModel):
 class RefreshCookieSettings(BaseModel):
     name: str
     secure: bool
-    samesite: str
+    samesite: CookieSameSite
 
 
 class AuthRateLimitSettings(BaseModel):
@@ -86,6 +91,11 @@ class AuthStateSettings(BaseModel):
     authz_cache_ttl_seconds: int
 
 
+class ProxySettings(BaseModel):
+    trust_forwarded_headers: bool
+    trusted_proxy_cidrs: tuple[IPvAnyNetwork, ...]
+
+
 class Settings(BaseSettings):
     mongodb_url: str
     db_name: str = "avangard"
@@ -94,11 +104,11 @@ class Settings(BaseSettings):
     dragonfly_key_prefix: str = "avangard"
     dragonfly_connect_timeout_seconds: float = 2.0
     dragonfly_socket_timeout_seconds: float = 2.0
-    dragonfly_fail_policy_rate_limit: str = "open"
-    dragonfly_fail_policy_auth_state: str = "closed"
-    dragonfly_fail_policy_ws_pubsub: str = "open"
-    dragonfly_fail_policy_ws_presence: str = "open"
-    dragonfly_fail_policy_authz_cache: str = "open"
+    dragonfly_fail_policy_rate_limit: FailPolicy = "open"
+    dragonfly_fail_policy_auth_state: FailPolicy = "closed"
+    dragonfly_fail_policy_ws_pubsub: FailPolicy = "open"
+    dragonfly_fail_policy_ws_presence: FailPolicy = "open"
+    dragonfly_fail_policy_authz_cache: FailPolicy = "open"
 
     jwt_secret_key: str
     refresh_token_secret_key: str
@@ -107,7 +117,7 @@ class Settings(BaseSettings):
     refresh_token_ttl_days: int = 30
     refresh_cookie_name: str = "refresh_token"
     refresh_cookie_secure: bool = False
-    refresh_cookie_samesite: str = "lax"
+    refresh_cookie_samesite: CookieSameSite = "lax"
 
     auth_rate_limit_window_seconds: int = 60
     auth_rate_limit_max_attempts: int = 10
@@ -117,6 +127,12 @@ class Settings(BaseSettings):
     abuse_auth_user_max_attempts: int = 100
     abuse_ws_ip_max_attempts: int = 300
     abuse_ws_user_max_attempts: int = 150
+
+    trust_forwarded_headers: bool = False
+    trusted_proxy_cidrs: tuple[IPvAnyNetwork, ...] = (
+        "127.0.0.1/32",
+        "::1/128",
+    )
 
     ws_connect_rate_limit_window_seconds: int = 60
     ws_connect_rate_limit_max_attempts: int = 20
@@ -135,6 +151,13 @@ class Settings(BaseSettings):
     authz_cache_ttl_seconds: int = 60
 
     model_config = SettingsConfigDict(env_file=".env")
+
+    @field_validator("trusted_proxy_cidrs", mode="before")
+    @classmethod
+    def _parse_trusted_proxy_cidrs(cls, value: object) -> object:
+        if isinstance(value, str):
+            return tuple(part.strip() for part in value.split(",") if part.strip())
+        return value
 
     @property
     def database(self) -> DatabaseSettings:
@@ -224,6 +247,13 @@ class Settings(BaseSettings):
             user_cutoff_ttl_seconds=self.auth_user_cutoff_ttl_seconds,
             refresh_lock_ttl_seconds=self.auth_refresh_lock_ttl_seconds,
             authz_cache_ttl_seconds=self.authz_cache_ttl_seconds,
+        )
+
+    @property
+    def proxy(self) -> ProxySettings:
+        return ProxySettings(
+            trust_forwarded_headers=self.trust_forwarded_headers,
+            trusted_proxy_cidrs=self.trusted_proxy_cidrs,
         )
 
 
