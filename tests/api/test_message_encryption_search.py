@@ -118,3 +118,81 @@ def test_message_delete_removes_it_from_search(client):
     )
     assert after_delete.status_code == 200
     assert after_delete.json() == []
+
+
+def test_message_search_supports_pagination(client):
+    owner = register_user(client, "search-page-owner")
+    room = create_room(
+        client,
+        owner["access_token"],
+        member_ids=[],
+        name="search-page-room",
+    )
+
+    first = create_message(
+        client,
+        owner["access_token"],
+        room["id"],
+        text="page-key one",
+    )
+    second = create_message(
+        client,
+        owner["access_token"],
+        room["id"],
+        text="page-key two",
+    )
+
+    first_page = client.get(
+        "/message/search?q=page-key&limit=1&offset=0",
+        headers=auth_headers(owner["access_token"]),
+    )
+    assert first_page.status_code == 200
+    assert len(first_page.json()) == 1
+
+    second_page = client.get(
+        "/message/search?q=page-key&limit=1&offset=1",
+        headers=auth_headers(owner["access_token"]),
+    )
+    assert second_page.status_code == 200
+    assert len(second_page.json()) == 1
+    assert first_page.json()[0]["id"] != second_page.json()[0]["id"]
+    assert {first["id"], second["id"]} == {
+        first_page.json()[0]["id"],
+        second_page.json()[0]["id"],
+    }
+
+
+def test_message_search_room_scope_filters_results(client):
+    owner = register_user(client, "search-scope-owner")
+    room_a = create_room(
+        client,
+        owner["access_token"],
+        member_ids=[],
+        name="scope-room-a",
+    )
+    room_b = create_room(
+        client,
+        owner["access_token"],
+        member_ids=[],
+        name="scope-room-b",
+    )
+
+    message_a = create_message(
+        client,
+        owner["access_token"],
+        room_a["id"],
+        text="scope-key alpha",
+    )
+    create_message(
+        client,
+        owner["access_token"],
+        room_b["id"],
+        text="scope-key beta",
+    )
+
+    scoped = client.get(
+        f"/message/search?q=scope-key&room_id={room_a['id']}",
+        headers=auth_headers(owner["access_token"]),
+    )
+    assert scoped.status_code == 200
+    assert [item["id"] for item in scoped.json()] == [message_a["id"]]

@@ -126,3 +126,63 @@ def test_login_rate_limit_returns_429(
         json={"username": "limited-login-user", "password": "wrong-password"},
     )
     assert blocked.status_code == 429
+
+
+def test_register_rate_limit_returns_429(
+    client: TestClient,
+    monkeypatch: pytest.MonkeyPatch,
+):
+    monkeypatch.setattr(settings, "auth_rate_limit_max_attempts", 2)
+    monkeypatch.setattr(settings, "auth_rate_limit_window_seconds", 60)
+
+    for idx in range(2):
+        response = client.post(
+            "/auth/register",
+            json={
+                "username": f"limited-register-{idx}",
+                "full_name": "Limited Register",
+                "password": "correct-horse-battery",
+            },
+        )
+        assert response.status_code == 200
+
+    blocked = client.post(
+        "/auth/register",
+        json={
+            "username": "limited-register-blocked",
+            "full_name": "Limited Register",
+            "password": "correct-horse-battery",
+        },
+    )
+    assert blocked.status_code == 429
+
+
+def test_refresh_rate_limit_returns_429(
+    client: TestClient,
+    monkeypatch: pytest.MonkeyPatch,
+):
+    monkeypatch.setattr(settings, "auth_rate_limit_max_attempts", 1)
+    monkeypatch.setattr(settings, "auth_rate_limit_window_seconds", 60)
+
+    register_user(client, "limited-refresh-user")
+
+    first = client.post("/auth/refresh")
+    assert first.status_code == 200
+
+    blocked = client.post("/auth/refresh")
+    assert blocked.status_code == 429
+
+
+def test_logout_clears_refresh_cookie(client: TestClient):
+    register_payload = register_user(client, "logout-cookie-user")
+    assert register_payload["access_token"]
+    assert client.cookies.get(settings.refresh_cookie.name)
+
+    response = client.post(
+        "/auth/logout",
+        headers=auth_headers(register_payload["access_token"]),
+    )
+    assert response.status_code == 200
+    set_cookie_header = response.headers.get("set-cookie", "")
+    assert settings.refresh_cookie.name in set_cookie_header
+    assert "Max-Age=0" in set_cookie_header or "expires=" in set_cookie_header.lower()

@@ -461,3 +461,89 @@ def test_websocket_idempotency_prevents_duplicate_messages(client: TestClient):
     )
     assert history_response.status_code == 200
     assert len(history_response.json()) == 1
+
+
+def test_websocket_requires_auth_subprotocol(client: TestClient):
+    owner = register_user(client, "ws-auth-protocol-owner")
+    room = create_room(
+        client,
+        owner["access_token"],
+        member_ids=[],
+        name="auth-protocol-room",
+    )
+
+    with pytest.raises(WebSocketDisconnect) as exc_info:
+        with client.websocket_connect(
+            _ws_url(room["id"]),
+            subprotocols=["chat.v1"],
+        ):
+            pass
+
+    assert exc_info.value.code == 1008
+
+
+def test_websocket_message_create_requires_idempotency_key(client: TestClient):
+    owner = register_user(client, "ws-idempotency-required-owner")
+    room = create_room(
+        client,
+        owner["access_token"],
+        member_ids=[],
+        name="idempotency-required-room",
+    )
+
+    with client.websocket_connect(
+        _ws_url(room["id"]),
+        subprotocols=_ws_subprotocols(owner["access_token"]),
+    ) as ws:
+        ws.send_json(
+            {
+                "type": "chat.message.create",
+                "payload": {"text": "hello"},
+            }
+        )
+        error_event = ws.receive_json()
+        assert error_event["type"] == "error"
+        assert error_event["payload"]["code"] == "invalid_event"
+
+        ws.send_json({"type": "chat.presence.get", "payload": {}})
+        snapshot = ws.receive_json()
+        assert snapshot["type"] == "chat.presence.snapshot"
+
+
+def test_websocket_ip_abuse_limit_blocks_connect_spam(
+    client: TestClient,
+    monkeypatch: pytest.MonkeyPatch,
+):
+    monkeypatch.setattr(settings, "ws_connect_rate_limit_max_attempts", 100)
+    monkeypatch.setattr(settings, "ws_connect_rate_limit_window_seconds", 60)
+    monkeypatch.setattr(settings, "abuse_ws_ip_max_attempts", 2)
+    monkeypatch.setattr(settings, "abuse_window_seconds", 60)
+
+    owner = register_user(client, "ws-ip-abuse-owner")
+    room = create_room(
+        client,
+        owner["access_token"],
+        member_ids=[],
+        name="ws-ip-abuse-room",
+    )
+
+    with client.websocket_connect(
+        _ws_url(room["id"]),
+        subprotocols=_ws_subprotocols(owner["access_token"]),
+    ):
+        pass
+
+    with client.websocket_connect(
+        _ws_url(room["id"]),
+        subprotocols=_ws_subprotocols(owner["access_token"]),
+    ):
+        pass
+
+    with pytest.raises(WebSocketDisconnect) as exc_info:
+        with client.websocket_connect(
+            _ws_url(room["id"]),
+            subprotocols=_ws_subprotocols(owner["access_token"]),
+        ):
+            pass
+
+    assert exc_info.value.code == 1008
