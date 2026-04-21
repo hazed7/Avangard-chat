@@ -76,7 +76,11 @@ def compose_refresh_token(session_id: str, token_secret: str) -> str:
 
 
 def split_refresh_token(token: str) -> tuple[str, str]:
+    if not token or "." not in token:
+        raise ValueError("Malformed refresh token")
     session_id, token_secret = token.split(".", maxsplit=1)
+    if not session_id or not token_secret:
+        raise ValueError("Malformed refresh token")
     return session_id, token_secret
 
 

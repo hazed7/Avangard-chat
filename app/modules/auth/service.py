@@ -108,9 +108,11 @@ class AuthService:
         ip_address: str | None,
     ) -> tuple[User, str, str]:
         user = await self._get_user_by_username(data.username)
-        if not verify_password_or_dummy(
-            data.password, user.password_hash if user else None
-        ):
+        password_ok = verify_password_or_dummy(
+            data.password,
+            user.password_hash if user else None,
+        )
+        if not user or not password_ok:
             raise HTTPException(status_code=401, detail="Invalid credentials")
 
         _, refresh_token = await self._create_refresh_session(

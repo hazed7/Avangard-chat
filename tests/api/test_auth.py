@@ -49,6 +49,16 @@ def test_login_rejects_invalid_credentials(client: TestClient):
     assert response.json()["detail"] == "Invalid credentials"
 
 
+def test_login_rejects_unknown_username_without_server_error(client: TestClient):
+    response = client.post(
+        "/auth/login",
+        json={"username": "missing-user", "password": "wrong-password"},
+    )
+
+    assert response.status_code == 401
+    assert response.json()["detail"] == "Invalid credentials"
+
+
 def test_register_rejects_duplicate_username(client: TestClient):
     register_user(client, "duplicate-user")
 

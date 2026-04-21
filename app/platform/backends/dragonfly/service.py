@@ -433,12 +433,16 @@ class DragonflyService:
         try:
             value = await self._adapter.get_text(key)
         except Exception as exc:  # noqa: BLE001
-            await self._handle_backend_failure(
-                policy=self._settings.dragonfly.fail_policy.authz_cache,
-                feature="authz_room_get",
-                exc=exc,
+            logger.warning(
+                "dragonfly_failure feature=%s policy=%s error=%s",
+                "authz_room_get",
+                self._settings.dragonfly.fail_policy.authz_cache,
+                exc,
             )
-            return None
+            raise HTTPException(
+                status_code=503,
+                detail="Temporary backend failure in authz_room_get",
+            )
         if value is None:
             return None
         return value == "1"

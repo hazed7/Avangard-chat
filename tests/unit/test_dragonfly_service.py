@@ -356,6 +356,16 @@ def test_get_user_cutoff_failure_raises_when_closed() -> None:
     assert exc.value.status_code == 503
 
 
+def test_get_room_access_cache_failure_always_fails_closed() -> None:
+    adapter = FakeAdapter()
+    adapter.raise_methods.add("get_text")
+    service = _service(adapter, dragonfly_fail_policy_authz_cache="open")
+
+    with pytest.raises(HTTPException) as exc:
+        asyncio.run(service.get_room_access_cache("room-1", "user-1"))
+    assert exc.value.status_code == 503
+
+
 def test_set_ws_idempotency_message_id_uses_configured_ttl() -> None:
     adapter = FakeAdapter()
     service = _service(adapter, ws_message_idempotency_ttl_seconds=333)
