@@ -16,6 +16,13 @@ def _ws_subprotocols(token: str) -> list[str]:
     return ["chat.v1", f"auth.bearer.{token}"]
 
 
+def _ws_create_message_event(text: str) -> dict:
+    return {
+        "type": "chat.message.create",
+        "payload": {"text": text},
+    }
+
+
 def test_websocket_messages_are_broadcast_and_persisted(client: TestClient):
     owner = register_user(client, "ws-owner")
     member = register_user(client, "ws-member")
@@ -36,15 +43,15 @@ def test_websocket_messages_are_broadcast_and_persisted(client: TestClient):
             subprotocols=_ws_subprotocols(member["access_token"]),
         ) as member_ws,
     ):
-        owner_ws.send_json({"text": "hello over websocket"})
+        owner_ws.send_json(_ws_create_message_event("hello over websocket"))
         owner_event = owner_ws.receive_json()
         member_event = member_ws.receive_json()
 
     for event in (owner_event, member_event):
-        assert event["type"] == "message"
-        assert event["message"]["text"] == "hello over websocket"
-        assert event["message"]["room_id"] == room["id"]
-        assert event["message"]["sender_id"] == owner["user"]["id"]
+        assert event["type"] == "chat.message.created"
+        assert event["payload"]["text"] == "hello over websocket"
+        assert event["payload"]["room_id"] == room["id"]
+        assert event["payload"]["sender_id"] == owner["user"]["id"]
 
     history_response = client.get(
         f"/message/room/{room['id']}",
@@ -75,7 +82,26 @@ def test_websocket_rejects_non_members(client: TestClient):
     assert exc_info.value.code == 1008
 
 
-def test_websocket_invalid_payload_returns_error(client: TestClient):
+def test_websocket_requires_chat_subprotocol(client: TestClient):
+    owner = register_user(client, "ws-protocol-owner")
+    room = create_room(
+        client,
+        owner["access_token"],
+        member_ids=[],
+        name="protocol-room",
+    )
+
+    with pytest.raises(WebSocketDisconnect) as exc_info:
+        with client.websocket_connect(
+            _ws_url(room["id"]),
+            subprotocols=[f"auth.bearer.{owner['access_token']}"],
+        ):
+            pass
+
+    assert exc_info.value.code == 1002
+
+
+def test_websocket_legacy_payload_returns_invalid_event_error(client: TestClient):
     owner = register_user(client, "ws-invalid-owner")
     room = create_room(
         client,
@@ -91,7 +117,13 @@ def test_websocket_invalid_payload_returns_error(client: TestClient):
         ws.send_json({"unexpected": "payload"})
         error_event = ws.receive_json()
 
-    assert error_event == {"type": "error", "detail": "Invalid message payload"}
+    assert error_event == {
+        "type": "error",
+        "payload": {
+            "code": "invalid_event",
+            "detail": "Expected event: chat.message.create",
+        },
+    }
 
 
 def test_websocket_disconnect_cleans_up_empty_room(client: TestClient):
@@ -102,6 +134,14 @@ def test_websocket_disconnect_cleans_up_empty_room(client: TestClient):
         member_ids=[],
         name="cleanup-room",
     )
+
+    assert room["id"] not in manager.rooms
+    with client.websocket_connect(
+        _ws_url(room["id"]),
+        subprotocols=_ws_subprotocols(owner["access_token"]),
+    ):
+        assert room["id"] in manager.rooms
+        assert len(manager.rooms[room["id"]]) == 1
 
     assert room["id"] not in manager.rooms
 
@@ -125,30 +165,25 @@ def test_websocket_rate_limit_blocks_spam(
         _ws_url(room["id"]),
         subprotocols=_ws_subprotocols(owner["access_token"]),
     ) as ws:
-        ws.send_json({"text": "one"})
+        ws.send_json(_ws_create_message_event("one"))
         first_event = ws.receive_json()
-        assert first_event["type"] == "message"
+        assert first_event["type"] == "chat.message.created"
 
-        ws.send_json({"text": "two"})
+        ws.send_json(_ws_create_message_event("two"))
         second_event = ws.receive_json()
-        assert second_event["type"] == "message"
+        assert second_event["type"] == "chat.message.created"
 
-        ws.send_json({"text": "three"})
+        ws.send_json(_ws_create_message_event("three"))
         error_event = ws.receive_json()
         assert error_event == {
             "type": "error",
-            "detail": "Too many websocket messages. Slow down.",
+            "payload": {
+                "code": "rate_limit_exceeded",
+                "detail": "Too many websocket messages. Slow down.",
+            },
         }
 
         with pytest.raises(WebSocketDisconnect) as exc_info:
             ws.receive_json()
 
     assert exc_info.value.code == 1008
-    with client.websocket_connect(
-        _ws_url(room["id"]),
-        subprotocols=_ws_subprotocols(owner["access_token"]),
-    ):
-        assert room["id"] in manager.rooms
-        assert len(manager.rooms[room["id"]]) == 1
-
-    assert room["id"] not in manager.rooms
