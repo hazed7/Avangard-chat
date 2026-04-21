@@ -15,6 +15,9 @@ services:
       - REFRESH_TOKEN_SECRET_KEY=change-me-refresh-secret
       - MESSAGE_ENCRYPTION_ACTIVE_KEY_ID=v1
       - 'MESSAGE_ENCRYPTION_KEYS={"v1":"MDEyMzQ1Njc4OWFiY2RlZjAxMjM0NTY3ODlhYmNkZWY="}'
+      - S3_URL=http://minio:9000
+      - S3_ACCESS_KEY=minio_admin
+      - S3_SECRET_KEY=minio_admin
     depends_on:
       mongodb:
         condition: service_healthy
@@ -22,6 +25,8 @@ services:
         condition: service_healthy
       typesense:
         condition: service_started
+      minio:
+        condition: service_healthy
     healthcheck:
       test:
         [
@@ -82,6 +87,26 @@ services:
       - typesense_data:/data
     restart: unless-stopped
 
+  minio:
+    image: minio/minio:RELEASE.2025-09-07T16-13-09Z
+    command: server /data --console-address ":9001"
+    ports:
+      - "9000:9000"   # API
+      - "9001:9001"   # Web
+    environment:
+      MINIO_ROOT_USER: minio_admin
+      MINIO_ROOT_PASSWORD: minio_admin
+    volumes:
+      - minio_data:/data
+    healthcheck:
+      test: [ "CMD", "curl", "-f", "http://localhost:9000/minio/health/live" ]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 10s
+    restart: unless-stopped
+
 volumes:
   mongo_data:
   typesense_data:
+  minio_data:

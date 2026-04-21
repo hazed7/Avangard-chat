@@ -116,6 +116,18 @@ class ProxySettings(BaseModel):
     trusted_proxy_cidrs: tuple[IPvAnyNetwork, ...]
 
 
+class S3Settings(BaseModel):
+    url: str
+    access_key: str
+    secret_key: str
+    bucket_avatars: str
+    bucket_attachments: str
+    folder_documents: str
+    folder_photos: str
+    folder_audio: str
+    folder_video: str
+
+
 class Settings(BaseSettings):
     mongodb_url: str
     db_name: str = "avangard"
@@ -183,6 +195,16 @@ class Settings(BaseSettings):
             "v1": "MDEyMzQ1Njc4OWFiY2RlZjAxMjM0NTY3ODlhYmNkZWY=",
         }
     )
+
+    s3_url: str
+    s3_access_key: str = "minio_admin"
+    s3_secret_key: str = "minio_admin"
+    s3_bucket_avatars: str = "avangard-avatars"
+    s3_bucket_attachments: str = "avangard-attachments"
+    s3_folder_documents: str = "documents"
+    s3_folder_photos: str = "photos"
+    s3_folder_audio: str = "audio"
+    s3_folder_video: str = "video"
 
     model_config = SettingsConfigDict(env_file=".env")
 
@@ -349,6 +371,20 @@ class Settings(BaseSettings):
         return ProxySettings(
             trust_forwarded_headers=self.trust_forwarded_headers,
             trusted_proxy_cidrs=self.trusted_proxy_cidrs,
+        )
+
+    @property
+    def s3(self) -> S3Settings:
+        return S3Settings(
+            url=self.s3_url,
+            access_key=self.s3_access_key,
+            secret_key=self.s3_secret_key,
+            bucket_avatars=self.s3_bucket_avatars,
+            bucket_attachments=self.s3_bucket_attachments,
+            folder_documents=self.s3_folder_documents,
+            folder_photos=self.s3_folder_photos,
+            folder_audio=self.s3_folder_audio,
+            folder_video=self.s3_folder_video,
         )
 
 

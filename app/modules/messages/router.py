@@ -1,15 +1,17 @@
-from fastapi import APIRouter, Depends, Query
+from fastapi import APIRouter, Depends, Query, UploadFile, HTTPException
 
+from app.modules.messages.model import Message
 from app.modules.messages.schemas import (
     MarkRoomReadResponse,
     MessageCreate,
     MessageCursorPageResponse,
     MessageResponse,
-    MessageUpdate,
+    MessageUpdate, serialize_message_response,
     UnreadCountsResponse,
 )
 from app.modules.messages.service import MessageService
 from app.modules.system.dependencies import get_message_service, verify_token
+from app.platform.backends.s3.service import upload_message_attachment
 from app.platform.http.errors import error_responses
 
 router = APIRouter()
@@ -131,6 +133,32 @@ async def edit_message(
         data=data,
         user_id=user["sub"],
     )
+
+
+@router.post(
+    "/attachment",
+    response_model=MessageResponse,
+    responses=error_responses(400, 401, 404)
+)
+async def upload_attachment(
+    message_id: str,
+    file: UploadFile,
+    user: dict = Depends(verify_token),
+    message_service: MessageService = Depends(get_message_service),
+):
+    message = await Message.find_one(Message.id == message_id)
+    if not message:
+        raise HTTPException(status_code=404, detail="Message not found")
+    object_name = await upload_message_attachment(
+        room_id=message.room.id,
+        file=file,
+    )
+    if not object_name:
+        raise HTTPException(status_code=400, detail="")
+    message.attachments.append(object_name)
+    message.save()
+
+    return message_service.serialize_message(message)
 
 
 @router.delete("/{message_id}", responses=error_responses(401, 403, 404))

@@ -12,6 +12,7 @@ from app.modules.users import router as users
 from app.modules.ws import router as ws
 from app.modules.ws.manager import manager
 from app.platform.backends.dragonfly.container import get_dragonfly_service_singleton
+from app.platform.backends.s3.service import init_s3
 from app.platform.backends.typesense.container import get_typesense_service_singleton
 
 
@@ -23,6 +24,7 @@ async def lifespan(app: FastAPI):
     await typesense.startup()
     try:
         await init_db()
+        await init_s3()
         await manager.startup()
         yield
     finally:

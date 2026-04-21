@@ -26,6 +26,7 @@ class MessageResponse(BaseModel):
     is_deleted: bool
     read_by: List[str]
     created_at: datetime
+    attachments: Optional[List[str]]
 
 
 class MessageCursorPageResponse(BaseModel):
@@ -60,5 +61,6 @@ def serialize_message_response(message: Message, *, text: str) -> MessageRespons
             "is_deleted": message.is_deleted,
             "read_by": [linked_document_id(user) for user in message.read_by],
             "created_at": message.created_at,
+            "attachments": message.attachments,
         }
     )

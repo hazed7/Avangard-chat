@@ -106,7 +106,7 @@ class MessageService:
             context=self._message_crypto_context(message),
         )
 
-    def _serialize_message(
+    def serialize_message(
         self, message: Message, *, text: str | None = None
     ) -> MessageResponse:
         if message.is_deleted:

@@ -20,6 +20,7 @@ class Message(Document):
     is_deleted: bool = False
     read_by: List[Link[User]] = Field(default_factory=list)
     created_at: datetime = Field(default_factory=lambda: datetime.now(UTC))
+    attachments: Optional[List[str]] = []
 
     class Settings:
         name = "messages"
