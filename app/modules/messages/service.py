@@ -31,6 +31,7 @@ from app.platform.security.message_crypto import MessageCrypto
 
 logger = get_logger("audit")
 DELETED_MESSAGE_TEXT = "[deleted]"
+MAX_MARK_ROOM_READ_EVENT_IDS = 1000
 
 
 class MessageService:
@@ -397,22 +398,21 @@ class MessageService:
         user = await self._get_user_or_404(user_id)
         user_ref = self._user_ref(user)
         room_ref = self._room_ref(room)
-        unread_messages = await Message.find(
-            {
-                "room": room_ref,
-                "is_deleted": False,
-                "sender": {"$ne": user_ref},
-                "read_by": {"$ne": user_ref},
-            }
-        ).to_list()
+        unread_query = {
+            "room": room_ref,
+            "is_deleted": False,
+            "sender": {"$ne": user_ref},
+            "read_by": {"$ne": user_ref},
+        }
+        unread_messages = await (
+            Message.find(unread_query)
+            .sort([("_id", 1)])
+            .limit(MAX_MARK_ROOM_READ_EVENT_IDS)
+            .to_list()
+        )
         unread_ids = [str(message.id) for message in unread_messages]
         result = await Message.get_motor_collection().update_many(
-            {
-                "room": room_ref,
-                "is_deleted": False,
-                "sender": {"$ne": user_ref},
-                "read_by": {"$ne": user_ref},
-            },
+            unread_query,
             {"$addToSet": {"read_by": user_ref}},
         )
         if result.modified_count:
@@ -421,6 +421,17 @@ class MessageService:
                 user_id=user_id,
                 by=result.modified_count,
             )
+            if result.modified_count > len(unread_ids):
+                logger.info(
+                    (
+                        "event=message.mark_room_read.events_truncated "
+                        "room_id=%s user_id=%s modified=%s emitted=%s"
+                    ),
+                    room_id,
+                    user_id,
+                    result.modified_count,
+                    len(unread_ids),
+                )
             for message_id in unread_ids:
                 await self._emit_delivery_state(
                     room_id=room_id,
@@ -491,11 +502,22 @@ class MessageService:
         if not message_ids:
             return MessageCursorPageResponse(items=[], next_cursor=None)
 
-        ordered_messages: list[Message] = []
+        object_ids: list[ObjectId] = []
         for message_id in message_ids:
-            message = await Message.get(message_id)
-            if message:
-                ordered_messages.append(message)
+            try:
+                object_ids.append(ObjectId(message_id))
+            except InvalidId:
+                continue
+        if not object_ids:
+            return MessageCursorPageResponse(items=[], next_cursor=None)
+
+        found_messages = await Message.find({"_id": {"$in": object_ids}}).to_list()
+        found_by_id = {str(message.id): message for message in found_messages}
+        ordered_messages = [
+            found_by_id[message_id]
+            for message_id in message_ids
+            if message_id in found_by_id
+        ]
         logger.info(
             (
                 "event=message.search user_id=%s room_scope=%s "

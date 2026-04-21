@@ -173,6 +173,37 @@ def test_message_search_supports_pagination(client):
     }
 
 
+def test_message_search_does_not_use_per_id_message_get(
+    client,
+    monkeypatch,
+):
+    owner = register_user(client, "search-bulk-owner")
+    room = create_room(
+        client,
+        owner["access_token"],
+        member_ids=[],
+        name="search-bulk-room",
+    )
+    create_message(
+        client,
+        owner["access_token"],
+        room["id"],
+        text="bulk-search-keyword",
+    )
+
+    async def fail_message_get(*args, **kwargs):  # noqa: ANN002, ANN003
+        raise AssertionError("Message.get must not be called during search")
+
+    monkeypatch.setattr(Message, "get", fail_message_get)
+
+    response = client.get(
+        "/message/search?q=bulk-search-keyword",
+        headers=auth_headers(owner["access_token"]),
+    )
+    assert response.status_code == 200
+    assert len(response.json()["items"]) == 1
+
+
 def test_message_search_room_scope_filters_results(client):
     owner = register_user(client, "search-scope-owner")
     room_a = create_room(
