@@ -1,5 +1,9 @@
 import asyncio
+import base64
+import json
 import time
+
+import pytest
 
 from app.modules.messages.model import Message
 from app.modules.system.cleanup_jobs.model import CleanupJob
@@ -297,6 +301,53 @@ def test_message_cursor_rejects_invalid_values(client):
         headers=auth_headers(owner["access_token"]),
     )
     assert invalid_search_cursor.status_code == 400
+
+
+def test_message_cursors_are_opaque_and_not_plain_json(client):
+    owner = register_user(client, "opaque-cursor-owner")
+    room = create_room(
+        client,
+        owner["access_token"],
+        member_ids=[],
+        name="opaque-cursor-room",
+    )
+    first = create_message(
+        client,
+        owner["access_token"],
+        room["id"],
+        text="opaque cursor one",
+    )
+    create_message(
+        client,
+        owner["access_token"],
+        room["id"],
+        text="opaque cursor two",
+    )
+
+    history_page = client.get(
+        f"/message/room/{room['id']}?limit=1",
+        headers=auth_headers(owner["access_token"]),
+    )
+    assert history_page.status_code == 200
+    history_cursor = history_page.json()["next_cursor"]
+    assert history_cursor is not None
+
+    history_decoded = base64.urlsafe_b64decode(history_cursor.encode())
+    with pytest.raises((UnicodeDecodeError, json.JSONDecodeError)):
+        json.loads(history_decoded.decode())
+    assert first["id"].encode() not in history_decoded
+
+    search_page = client.get(
+        "/message/search?q=opaque&limit=1",
+        headers=auth_headers(owner["access_token"]),
+    )
+    assert search_page.status_code == 200
+    search_cursor = search_page.json()["next_cursor"]
+    assert search_cursor is not None
+
+    search_decoded = base64.urlsafe_b64decode(search_cursor.encode())
+    with pytest.raises((UnicodeDecodeError, json.JSONDecodeError)):
+        json.loads(search_decoded.decode())
 
 
 def test_room_delete_cascades_messages_and_search_docs(client):

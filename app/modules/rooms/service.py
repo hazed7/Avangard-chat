@@ -6,7 +6,7 @@ from beanie.odm.operators.find.comparison import In
 from bson import ObjectId
 from bson.errors import InvalidId
 from fastapi import HTTPException
-from pymongo.errors import DuplicateKeyError
+from pymongo.errors import DuplicateKeyError, PyMongoError
 
 from app.modules.messages.model import Message
 from app.modules.messages.unread.service import UnreadCounterService
@@ -257,11 +257,49 @@ class RoomService:
         await self._ensure_room_owner(room, user_id)
 
         room_ref = linked_document_ref(ChatRoom.Settings.name, room.id)
+        room_collection = ChatRoom.get_motor_collection()
+        room_snapshot = await room_collection.find_one({"_id": room.id})
+        if room_snapshot is None:
+            logger.info(
+                "event=room.delete.idempotent actor_id=%s room_id=%s",
+                user_id,
+                room_id,
+            )
+            return
+
         room_messages = await Message.find({"room": room_ref}).to_list()
         message_ids = [str(message.id) for message in room_messages]
+        try:
+            delete_room_result = await room_collection.delete_one({"_id": room.id})
+        except (PyMongoError, OSError, TimeoutError) as exc:
+            raise HTTPException(
+                status_code=503,
+                detail="Temporary room deletion failure",
+            ) from exc
+        if delete_room_result.deleted_count == 0:
+            logger.info(
+                "event=room.delete.idempotent actor_id=%s room_id=%s",
+                user_id,
+                room_id,
+            )
+            return
 
-        await Message.find({"room": room_ref}).delete()
-        await room.delete()
+        try:
+            await Message.get_motor_collection().delete_many({"room": room_ref})
+        except (PyMongoError, OSError, TimeoutError) as exc:
+            try:
+                await room_collection.insert_one(room_snapshot)
+            except (PyMongoError, OSError, TimeoutError) as restore_exc:
+                logger.error(
+                    ("event=room.delete.compensation_failed room_id=%s error=%s"),
+                    room_id,
+                    restore_exc,
+                )
+            raise HTTPException(
+                status_code=503,
+                detail="Temporary room deletion failure",
+            ) from exc
+
         await self.unread_counters.remove_for_room(str(room.id))
         await self.cleanup_jobs.enqueue_room_delete_cleanup(
             room_id=str(room.id),

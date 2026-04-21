@@ -168,10 +168,26 @@ class AuthService:
                 int(session["expires_at"]),
                 now_ts,
             )
-            await self.dragonfly.save_refresh_session(
-                session=session,
-                ttl_seconds=ttl_seconds,
-            )
+            try:
+                await self.dragonfly.save_refresh_session(
+                    session=session,
+                    ttl_seconds=ttl_seconds,
+                )
+            except HTTPException as exc:
+                rollback_now = now_unix()
+                new_session["revoked_at"] = rollback_now
+                rollback_ttl_seconds = self._refresh_session_ttl_seconds(
+                    int(new_session["expires_at"]),
+                    rollback_now,
+                )
+                await self.dragonfly.save_refresh_session(
+                    session=new_session,
+                    ttl_seconds=rollback_ttl_seconds,
+                )
+                raise HTTPException(
+                    status_code=503,
+                    detail="Temporary session rotation failure",
+                ) from exc
 
             access_token = create_access_token(user.id, user.username)
             return user, access_token, new_refresh_token

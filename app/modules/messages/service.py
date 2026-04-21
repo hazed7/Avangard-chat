@@ -1,10 +1,15 @@
 import base64
+import hashlib
 import json
+import os
+from binascii import Error as BinasciiError
 from datetime import UTC, datetime
 from time import time
 
 from bson import ObjectId
 from bson.errors import InvalidId
+from cryptography.exceptions import InvalidTag
+from cryptography.hazmat.primitives.ciphers.aead import AESGCM
 from fastapi import HTTPException
 
 from app.modules.messages.model import Message
@@ -25,6 +30,7 @@ from app.modules.system.cleanup_jobs.service import CleanupJobService
 from app.modules.users.model import User
 from app.platform.backends.dragonfly.service import DragonflyService
 from app.platform.backends.typesense.service import TypesenseService
+from app.platform.config.settings import settings
 from app.platform.observability.logger import get_logger
 from app.platform.persistence.links import linked_document_id, linked_document_ref
 from app.platform.security.message_crypto import MessageCrypto
@@ -32,6 +38,8 @@ from app.platform.security.message_crypto import MessageCrypto
 logger = get_logger("audit")
 DELETED_MESSAGE_TEXT = "[deleted]"
 MAX_MARK_ROOM_READ_EVENT_IDS = 1000
+CURSOR_AAD = b"message-cursor:v1"
+CURSOR_NONCE_BYTES = 12
 
 
 class MessageService:
@@ -140,38 +148,77 @@ class MessageService:
         return member_ids
 
     @staticmethod
-    def _encode_history_cursor(message: Message) -> str:
+    def _cursor_aesgcm() -> AESGCM:
+        key = hashlib.sha256(settings.jwt.refresh_secret_key.encode()).digest()
+        return AESGCM(key)
+
+    @classmethod
+    def _encode_cursor_payload(cls, payload: dict) -> str:
+        nonce = os.urandom(CURSOR_NONCE_BYTES)
+        plaintext = json.dumps(payload, separators=(",", ":")).encode()
+        ciphertext = cls._cursor_aesgcm().encrypt(
+            nonce=nonce,
+            data=plaintext,
+            associated_data=CURSOR_AAD,
+        )
+        return base64.urlsafe_b64encode(nonce + ciphertext).decode()
+
+    @classmethod
+    def _decode_cursor_payload(cls, cursor: str) -> dict:
+        try:
+            raw = base64.urlsafe_b64decode(cursor.encode())
+            if len(raw) <= CURSOR_NONCE_BYTES:
+                raise ValueError("cursor payload is too short")
+            nonce = raw[:CURSOR_NONCE_BYTES]
+            ciphertext = raw[CURSOR_NONCE_BYTES:]
+            plaintext = cls._cursor_aesgcm().decrypt(
+                nonce=nonce,
+                data=ciphertext,
+                associated_data=CURSOR_AAD,
+            )
+            payload = json.loads(plaintext.decode())
+            if not isinstance(payload, dict):
+                raise ValueError("cursor payload must be an object")
+            return payload
+        except (
+            BinasciiError,
+            InvalidTag,
+            ValueError,
+            TypeError,
+            json.JSONDecodeError,
+            UnicodeDecodeError,
+        ):
+            raise HTTPException(status_code=400, detail="Invalid cursor")
+
+    @classmethod
+    def _encode_history_cursor(cls, message: Message) -> str:
         payload = {
             "created_at": message.created_at.isoformat(),
             "message_id": str(message.id),
         }
-        raw = json.dumps(payload, separators=(",", ":")).encode()
-        return base64.urlsafe_b64encode(raw).decode()
+        return cls._encode_cursor_payload(payload)
 
-    @staticmethod
-    def _decode_history_cursor(cursor: str) -> tuple[datetime, ObjectId]:
+    @classmethod
+    def _decode_history_cursor(cls, cursor: str) -> tuple[datetime, ObjectId]:
         try:
-            decoded = base64.urlsafe_b64decode(cursor.encode()).decode()
-            payload = json.loads(decoded)
+            payload = cls._decode_cursor_payload(cursor)
             created_at = datetime.fromisoformat(payload["created_at"])
             message_id = ObjectId(payload["message_id"])
             return created_at, message_id
-        except (ValueError, KeyError, TypeError, InvalidId, json.JSONDecodeError):
+        except (ValueError, KeyError, TypeError, InvalidId):
             raise HTTPException(status_code=400, detail="Invalid cursor")
 
-    @staticmethod
-    def _encode_search_cursor(page: int) -> str:
+    @classmethod
+    def _encode_search_cursor(cls, page: int) -> str:
         payload = {"page": page}
-        raw = json.dumps(payload, separators=(",", ":")).encode()
-        return base64.urlsafe_b64encode(raw).decode()
+        return cls._encode_cursor_payload(payload)
 
-    @staticmethod
-    def _decode_search_cursor(cursor: str) -> int:
+    @classmethod
+    def _decode_search_cursor(cls, cursor: str) -> int:
         try:
-            decoded = base64.urlsafe_b64decode(cursor.encode()).decode()
-            payload = json.loads(decoded)
+            payload = cls._decode_cursor_payload(cursor)
             page = int(payload["page"])
-        except (ValueError, KeyError, TypeError, json.JSONDecodeError):
+        except (ValueError, KeyError, TypeError):
             raise HTTPException(status_code=400, detail="Invalid cursor")
         if page < 1:
             raise HTTPException(status_code=400, detail="Invalid cursor")
