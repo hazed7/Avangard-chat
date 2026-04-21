@@ -1,3 +1,4 @@
+import asyncio
 import base64
 import hashlib
 import json
@@ -11,6 +12,7 @@ from bson.errors import InvalidId
 from cryptography.exceptions import InvalidTag
 from cryptography.hazmat.primitives.ciphers.aead import AESGCM
 from fastapi import HTTPException
+from pymongo.errors import PyMongoError
 
 from app.modules.messages.model import Message
 from app.modules.messages.schemas import (
@@ -40,6 +42,15 @@ DELETED_MESSAGE_TEXT = "[deleted]"
 MAX_MARK_ROOM_READ_EVENT_IDS = 1000
 CURSOR_AAD = b"message-cursor:v1"
 CURSOR_NONCE_BYTES = 12
+MESSAGE_WRITE_ERRORS = (
+    HTTPException,
+    PyMongoError,
+    OSError,
+    TimeoutError,
+    RuntimeError,
+    ValueError,
+    TypeError,
+)
 
 
 class MessageService:
@@ -256,6 +267,111 @@ class MessageService:
             is_deleted=message.is_deleted,
         )
 
+    async def _rollback_send_after_insert(
+        self,
+        *,
+        message: Message,
+        cleanup_typesense: bool,
+    ) -> None:
+        message_id = str(message.id)
+        db_deleted = False
+        try:
+            await message.delete()
+            db_deleted = True
+        except MESSAGE_WRITE_ERRORS as rollback_exc:
+            logger.error(
+                "event=message.send.rollback_delete_failed message_id=%s error=%s",
+                message_id,
+                rollback_exc,
+            )
+
+        if not cleanup_typesense or not db_deleted:
+            return
+
+        try:
+            await self.typesense.delete_message(message_id=message_id)
+        except MESSAGE_WRITE_ERRORS as rollback_exc:
+            logger.warning(
+                (
+                    "event=message.send.rollback_typesense_delete_failed "
+                    "message_id=%s error=%s"
+                ),
+                message_id,
+                rollback_exc,
+            )
+            try:
+                await self.cleanup_jobs.enqueue_message_delete_cleanup(
+                    message_id=message_id
+                )
+            except MESSAGE_WRITE_ERRORS as enqueue_exc:
+                logger.error(
+                    (
+                        "event=message.send.rollback_cleanup_enqueue_failed "
+                        "message_id=%s error=%s"
+                    ),
+                    message_id,
+                    enqueue_exc,
+                )
+
+    @staticmethod
+    def _capture_edit_state(message: Message) -> dict[str, object]:
+        return {
+            "text_ciphertext": message.text_ciphertext,
+            "text_nonce": message.text_nonce,
+            "text_key_id": message.text_key_id,
+            "text_aad": message.text_aad,
+            "is_edited": message.is_edited,
+            "edited_at": message.edited_at,
+        }
+
+    @staticmethod
+    def _restore_edit_state(
+        message: Message, previous_state: dict[str, object]
+    ) -> None:
+        message.text_ciphertext = str(previous_state["text_ciphertext"])
+        message.text_nonce = str(previous_state["text_nonce"])
+        message.text_key_id = str(previous_state["text_key_id"])
+        message.text_aad = str(previous_state["text_aad"])
+        message.is_edited = bool(previous_state["is_edited"])
+        message.edited_at = previous_state["edited_at"]  # type: ignore[assignment]
+
+    async def _rollback_edit_after_index_failure(
+        self,
+        *,
+        message: Message,
+        previous_state: dict[str, object],
+        previous_text: str,
+        error: Exception,
+    ) -> None:
+        self._restore_edit_state(message, previous_state)
+        try:
+            await message.save()
+        except MESSAGE_WRITE_ERRORS as rollback_exc:
+            logger.error(
+                (
+                    "event=message.edit.rollback_save_failed "
+                    "message_id=%s error=%s rollback_error=%s"
+                ),
+                str(message.id),
+                error,
+                rollback_exc,
+            )
+            raise rollback_exc
+
+        try:
+            await self._index_message(message, text=previous_text)
+        except MESSAGE_WRITE_ERRORS as rollback_exc:
+            logger.error(
+                (
+                    "event=message.edit.rollback_reindex_failed "
+                    "message_id=%s error=%s rollback_error=%s"
+                ),
+                str(message.id),
+                error,
+                rollback_exc,
+            )
+            raise rollback_exc
+
     async def send(self, data: MessageCreate, sender_id: str) -> MessageResponse:
         room = await self.room_service.get_for_user(data.room_id, sender_id)
         sender = await self._get_user_or_404(sender_id)
@@ -277,14 +393,25 @@ class MessageService:
             created_at=created_at,
         )
         await message.insert()
+        should_cleanup_typesense = False
         try:
+            should_cleanup_typesense = True
             await self._index_message(message, text=data.text)
             await self.unread_counters.increment_for_new_message(
                 room=room,
                 sender_id=sender_id,
             )
-        except HTTPException:
-            await message.delete()
+        except asyncio.CancelledError:
+            await self._rollback_send_after_insert(
+                message=message,
+                cleanup_typesense=should_cleanup_typesense,
+            )
+            raise
+        except MESSAGE_WRITE_ERRORS:
+            await self._rollback_send_after_insert(
+                message=message,
+                cleanup_typesense=should_cleanup_typesense,
+            )
             raise
         logger.info(
             "event=message.send user_id=%s room_id=%s message_id=%s",
@@ -340,12 +467,8 @@ class MessageService:
                 detail="Deleted messages cannot be edited",
             )
 
-        previous_ciphertext = message.text_ciphertext
-        previous_nonce = message.text_nonce
-        previous_key_id = message.text_key_id
-        previous_aad = message.text_aad
-        previous_is_edited = message.is_edited
-        previous_edited_at = message.edited_at
+        previous_state = self._capture_edit_state(message)
+        previous_text = self._decrypt_text(message)
 
         encrypted = self._encrypt_text(
             text=data.text,
@@ -362,14 +485,21 @@ class MessageService:
         await message.save()
         try:
             await self._index_message(message, text=data.text)
-        except HTTPException:
-            message.text_ciphertext = previous_ciphertext
-            message.text_nonce = previous_nonce
-            message.text_key_id = previous_key_id
-            message.text_aad = previous_aad
-            message.is_edited = previous_is_edited
-            message.edited_at = previous_edited_at
-            await message.save()
+        except asyncio.CancelledError as exc:
+            await self._rollback_edit_after_index_failure(
+                message=message,
+                previous_state=previous_state,
+                previous_text=previous_text,
+                error=exc,
+            )
+            raise
+        except MESSAGE_WRITE_ERRORS as exc:
+            await self._rollback_edit_after_index_failure(
+                message=message,
+                previous_state=previous_state,
+                previous_text=previous_text,
+                error=exc,
+            )
             raise
         logger.info(
             "event=message.edit user_id=%s message_id=%s",
