@@ -103,8 +103,9 @@ def get_rate_limit_service(
 
 def get_room_service(
     dragonfly: DragonflyService = Depends(get_dragonfly_service),
+    typesense: TypesenseService = Depends(get_typesense_service),
 ) -> RoomService:
-    return RoomService(dragonfly=dragonfly)
+    return RoomService(dragonfly=dragonfly, typesense=typesense)
 
 
 def get_message_service(

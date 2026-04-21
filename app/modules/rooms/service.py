@@ -2,16 +2,19 @@ from beanie.odm.operators.find.comparison import In
 from fastapi import HTTPException
 from pymongo.errors import DuplicateKeyError
 
+from app.modules.messages.model import Message
 from app.modules.rooms.model import ChatRoom
 from app.modules.rooms.schemas import DirectRoomCreate, GroupRoomCreate
 from app.modules.users.model import User
 from app.platform.backends.dragonfly.service import DragonflyService
+from app.platform.backends.typesense.service import TypesenseService
 from app.platform.persistence.links import linked_document_id, linked_document_ref
 
 
 class RoomService:
-    def __init__(self, dragonfly: DragonflyService):
+    def __init__(self, dragonfly: DragonflyService, typesense: TypesenseService):
         self.dragonfly = dragonfly
+        self.typesense = typesense
 
     @staticmethod
     def _dedupe_preserve_order(items: list[str]) -> list[str]:
@@ -154,6 +157,15 @@ class RoomService:
     async def delete_room(self, room_id: str, user_id: str) -> None:
         room = await self._get_room_or_404(room_id)
         await self._ensure_room_owner(room, user_id)
+
+        room_ref = linked_document_ref(ChatRoom.Settings.name, room.id)
+        room_messages = await Message.find({"room": room_ref}).to_list()
+        message_ids = [str(message.id) for message in room_messages]
+        for message_id in message_ids:
+            await self.typesense.delete_message(message_id=message_id)
+            await self.dragonfly.invalidate_message_owner_cache(message_id)
+
+        await Message.find({"room": room_ref}).delete()
         await room.delete()
         await self.dragonfly.invalidate_room_access_cache(str(room.id))
 
