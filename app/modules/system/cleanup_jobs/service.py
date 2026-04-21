@@ -1,5 +1,6 @@
 from datetime import UTC, datetime, timedelta
 
+from fastapi import HTTPException
 from pymongo.errors import DuplicateKeyError
 
 from app.modules.messages.unread.service import UnreadCounterService
@@ -114,7 +115,15 @@ class CleanupJobService:
 
         try:
             await self._execute(refreshed)
-        except Exception as exc:  # noqa: BLE001
+        except (
+            HTTPException,
+            KeyError,
+            TypeError,
+            ValueError,
+            OSError,
+            TimeoutError,
+            RuntimeError,
+        ) as exc:
             await self._handle_failure(job=refreshed, error=str(exc))
             return
 

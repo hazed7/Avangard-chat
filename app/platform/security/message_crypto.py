@@ -1,8 +1,10 @@
 import base64
 import json
 import os
+from binascii import Error as BinasciiError
 from dataclasses import dataclass
 
+from cryptography.exceptions import InvalidTag
 from cryptography.hazmat.primitives.ciphers.aead import AESGCM
 from fastapi import HTTPException
 
@@ -76,7 +78,13 @@ class MessageCrypto:
                 data=base64.b64decode(ciphertext, validate=True),
                 associated_data=stored_aad,
             )
-        except Exception as exc:  # noqa: BLE001
+        except (
+            BinasciiError,
+            InvalidTag,
+            TypeError,
+            ValueError,
+            UnicodeDecodeError,
+        ) as exc:
             raise HTTPException(
                 status_code=500,
                 detail="Failed to decrypt message payload",

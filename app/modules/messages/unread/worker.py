@@ -1,6 +1,9 @@
 import asyncio
 from datetime import UTC, datetime
 
+from fastapi import HTTPException
+from pymongo.errors import PyMongoError
+
 from app.modules.messages.model import Message
 from app.modules.messages.unread.model import RoomUnreadCounter
 from app.modules.messages.unread.service import UnreadCounterService
@@ -40,7 +43,9 @@ class UnreadCounterReconciliationWorker:
             await asyncio.sleep(self._interval_seconds)
             try:
                 await self.run_once()
-            except Exception as exc:  # noqa: BLE001
+            except asyncio.CancelledError:
+                raise
+            except (HTTPException, PyMongoError, OSError, TimeoutError) as exc:
                 logger.warning("event=unread.reconcile.failed error=%s", exc)
 
     async def run_once(self) -> None:

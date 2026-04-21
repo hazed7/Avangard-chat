@@ -1,5 +1,8 @@
 import asyncio
 
+from fastapi import HTTPException
+from pymongo.errors import PyMongoError
+
 from app.modules.system.cleanup_jobs.service import CleanupJobService
 from app.platform.observability.logger import get_logger
 
@@ -33,6 +36,8 @@ class CleanupJobWorker:
         while True:
             try:
                 await self._service.run_once()
-            except Exception as exc:  # noqa: BLE001
+            except asyncio.CancelledError:
+                raise
+            except (HTTPException, PyMongoError, OSError, TimeoutError) as exc:
                 logger.warning("event=cleanup.worker.failed error=%s", exc)
             await asyncio.sleep(self._interval_seconds)

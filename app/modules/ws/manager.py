@@ -5,7 +5,8 @@ from dataclasses import dataclass
 from typing import Any
 from uuid import uuid4
 
-from fastapi import WebSocket
+from fastapi import HTTPException, WebSocket
+from starlette.websockets import WebSocketDisconnect
 
 from app.platform.backends.dragonfly.container import get_dragonfly_service_singleton
 from app.platform.backends.dragonfly.service import DragonflyService
@@ -106,7 +107,7 @@ class ConnectionManager:
                     await self._fanout_local(room_id, payload)
             except asyncio.CancelledError:
                 raise
-            except Exception as exc:  # noqa: BLE001
+            except (HTTPException, OSError, TimeoutError, RuntimeError) as exc:
                 logger.warning("ws_pubsub_listener_error error=%s", exc)
                 await asyncio.sleep(1)
                 logger.info("ws_pubsub_listener_reconnecting")
@@ -116,7 +117,7 @@ class ConnectionManager:
         for websocket in list(self._rooms.get(room_id, [])):
             try:
                 await websocket.send_json(message)
-            except Exception:  # noqa: BLE001
+            except (RuntimeError, WebSocketDisconnect):
                 dead_connections.append(websocket)
 
         for websocket in dead_connections:
