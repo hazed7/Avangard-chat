@@ -105,8 +105,8 @@ class DragonflyAdapter:
             only_if_missing=only_if_missing,
         )
 
-    async def delete(self, key: str) -> None:
-        await self._require_client().delete(key)
+    async def delete(self, key: str) -> int:
+        return int(await self._require_client().delete(key))
 
     async def touch(self, key: str, ttl_seconds: int) -> None:
         await self._require_client().expire(key, ttl_seconds)

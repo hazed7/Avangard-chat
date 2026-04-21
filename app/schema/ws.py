@@ -53,6 +53,27 @@ class WsPresenceSnapshotEvent(BaseModel):
     payload: WsPresenceSnapshotPayload
 
 
+class WsTypingSetPayload(BaseModel):
+    is_typing: bool
+
+
+class WsTypingSetEvent(BaseModel):
+    type: Literal["chat.typing.set"]
+    payload: WsTypingSetPayload
+
+
+class WsTypingUpdatedPayload(BaseModel):
+    room_id: str
+    user_id: str
+    is_typing: bool
+    ts: int
+
+
+class WsTypingUpdatedEvent(BaseModel):
+    type: Literal["chat.typing.updated"] = "chat.typing.updated"
+    payload: WsTypingUpdatedPayload
+
+
 class WsErrorPayload(BaseModel):
     code: str
     detail: str

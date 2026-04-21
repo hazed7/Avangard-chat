@@ -1,4 +1,4 @@
-import time
+import asyncio
 from uuid import uuid4
 
 import pytest
@@ -6,7 +6,7 @@ from fastapi.testclient import TestClient
 from starlette.websockets import WebSocketDisconnect
 
 from app.config import settings
-from app.ws.manager import manager
+from app.ws.manager import ConnectionContext, ConnectionManager
 from tests.test_access_control import create_room
 from tests.test_auth import auth_headers, register_user
 
@@ -26,6 +26,13 @@ def _ws_create_message_event(text: str, idempotency_key: str | None = None) -> d
             "text": text,
             "idempotency_key": idempotency_key or uuid4().hex,
         },
+    }
+
+
+def _ws_set_typing_event(is_typing: bool) -> dict:
+    return {
+        "type": "chat.typing.set",
+        "payload": {"is_typing": is_typing},
     }
 
 
@@ -128,7 +135,8 @@ def test_websocket_legacy_payload_returns_invalid_event_error(client: TestClient
         "payload": {
             "code": "invalid_event",
             "detail": (
-                "Expected event: chat.message.create, chat.presence.get or chat.pong"
+                "Expected event: chat.message.create, chat.presence.get, "
+                "chat.typing.set or chat.pong"
             ),
         },
     }
@@ -165,42 +173,123 @@ def test_websocket_presence_get_returns_online_members(client: TestClient):
     }
 
 
-def test_websocket_disconnect_cleans_up_empty_room(
+def test_websocket_typing_is_broadcast_and_cleared_on_message(client: TestClient):
+    owner = register_user(client, "ws-typing-owner")
+    member = register_user(client, "ws-typing-member")
+    room = create_room(
+        client,
+        owner["access_token"],
+        member_ids=[member["user"]["id"]],
+        name="typing-room",
+    )
+
+    with (
+        client.websocket_connect(
+            _ws_url(room["id"]),
+            subprotocols=_ws_subprotocols(owner["access_token"]),
+        ) as owner_ws,
+        client.websocket_connect(
+            _ws_url(room["id"]),
+            subprotocols=_ws_subprotocols(member["access_token"]),
+        ) as member_ws,
+    ):
+        owner_ws.send_json(_ws_set_typing_event(True))
+        owner_typing_event = owner_ws.receive_json()
+        member_typing_event = member_ws.receive_json()
+
+        owner_ws.send_json(_ws_create_message_event("typing then send"))
+        owner_typing_cleared = owner_ws.receive_json()
+        owner_message_created = owner_ws.receive_json()
+        member_typing_cleared = member_ws.receive_json()
+        member_message_created = member_ws.receive_json()
+
+    for event in (owner_typing_event, member_typing_event):
+        assert event["type"] == "chat.typing.updated"
+        assert event["payload"]["room_id"] == room["id"]
+        assert event["payload"]["user_id"] == owner["user"]["id"]
+        assert event["payload"]["is_typing"] is True
+
+    for event in (owner_typing_cleared, member_typing_cleared):
+        assert event["type"] == "chat.typing.updated"
+        assert event["payload"]["user_id"] == owner["user"]["id"]
+        assert event["payload"]["is_typing"] is False
+
+    for event in (owner_message_created, member_message_created):
+        assert event["type"] == "chat.message.created"
+        assert event["payload"]["text"] == "typing then send"
+
+
+def test_websocket_typing_rate_limit_returns_error_without_disconnect(
     client: TestClient,
     monkeypatch: pytest.MonkeyPatch,
 ):
-    monkeypatch.setattr(settings, "ws_rate_limit_max_messages", 0)
-    monkeypatch.setattr(settings, "ws_rate_limit_window_seconds", 60)
+    monkeypatch.setattr(settings, "ws_typing_rate_limit_max_events", 1)
+    monkeypatch.setattr(settings, "ws_typing_rate_limit_window_seconds", 60)
 
-    owner = register_user(client, "ws-cleanup-owner")
+    owner = register_user(client, "ws-typing-limit-owner")
     room = create_room(
         client,
         owner["access_token"],
         member_ids=[],
-        name="cleanup-room",
+        name="typing-limit-room",
     )
 
-    assert room["id"] not in manager.rooms
     with client.websocket_connect(
         _ws_url(room["id"]),
         subprotocols=_ws_subprotocols(owner["access_token"]),
     ) as ws:
-        connected_deadline = time.time() + 1.0
-        while room["id"] not in manager.rooms and time.time() < connected_deadline:
-            time.sleep(0.01)
+        ws.send_json(_ws_set_typing_event(True))
+        first = ws.receive_json()
+        assert first["type"] == "chat.typing.updated"
 
-        assert room["id"] in manager.rooms
-        assert len(manager.rooms[room["id"]]) == 1
-        ws.send_json(_ws_create_message_event("cleanup trigger"))
-        assert ws.receive_json()["type"] == "error"
-        with pytest.raises(WebSocketDisconnect):
-            ws.receive_json()
+        ws.send_json(_ws_set_typing_event(False))
+        second = ws.receive_json()
+        assert second == {
+            "type": "error",
+            "payload": {
+                "code": "rate_limit_exceeded",
+                "detail": "Too many typing events. Slow down.",
+            },
+        }
 
-    deadline = time.time() + 2.0
-    while room["id"] in manager.rooms and time.time() < deadline:
-        time.sleep(0.01)
+        ws.send_json({"type": "chat.presence.get", "payload": {}})
+        still_open = ws.receive_json()
+        assert still_open["type"] == "chat.presence.snapshot"
 
-    assert room["id"] not in manager.rooms
+
+def test_websocket_disconnect_cleans_up_empty_room():
+    class FakeDragonfly:
+        def __init__(self):
+            self.cleared: list[tuple[str, str, str]] = []
+
+        async def clear_ws_presence(
+            self,
+            *,
+            room_id: str,
+            user_id: str,
+            connection_id: str,
+        ) -> None:
+            self.cleared.append((room_id, user_id, connection_id))
+
+    fake_dragonfly = FakeDragonfly()
+    local_manager = ConnectionManager(dragonfly=fake_dragonfly)
+    websocket = object()
+    room_id = "room-cleanup-test"
+    user_id = "user-cleanup-test"
+    connection_id = "conn-cleanup-test"
+
+    local_manager.rooms[room_id].append(websocket)
+    local_manager._context_by_socket[websocket] = ConnectionContext(
+        room_id=room_id,
+        user_id=user_id,
+        connection_id=connection_id,
+    )
+
+    asyncio.run(local_manager.disconnect(websocket, room_id))
+
+    assert room_id not in local_manager.rooms
+    assert websocket not in local_manager._context_by_socket
+    assert fake_dragonfly.cleared == [(room_id, user_id, connection_id)]
 
 
 def test_websocket_rate_limit_blocks_spam(

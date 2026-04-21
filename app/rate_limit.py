@@ -44,3 +44,14 @@ class RateLimitService:
             user_id=user_id,
             room_id=room_id,
         )
+
+    async def enforce_ws_typing(
+        self,
+        *,
+        user_id: str,
+        room_id: str,
+    ) -> None:
+        await self._dragonfly.enforce_ws_typing_rate_limit(
+            user_id=user_id,
+            room_id=room_id,
+        )

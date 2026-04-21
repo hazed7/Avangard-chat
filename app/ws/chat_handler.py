@@ -21,6 +21,9 @@ from app.schema.ws import (
     WsPresenceGetEvent,
     WsPresenceSnapshotEvent,
     WsPresenceSnapshotPayload,
+    WsTypingSetEvent,
+    WsTypingUpdatedEvent,
+    WsTypingUpdatedPayload,
 )
 from app.service.message_service import MessageService
 from app.service.room_service import RoomService
@@ -29,7 +32,8 @@ from app.ws.manager import manager
 AUTH_SUBPROTOCOL_PREFIX = "auth.bearer."
 CHAT_SUBPROTOCOL = "chat.v1"
 EXPECTED_EVENT_DETAIL = (
-    "Expected event: chat.message.create, chat.presence.get or chat.pong"
+    "Expected event: chat.message.create, chat.presence.get, chat.typing.set or "
+    "chat.pong"
 )
 
 
@@ -98,6 +102,24 @@ async def _send_presence_snapshot(
     )
 
 
+def _typing_updated_event(
+    *,
+    room_id: str,
+    user_id: str,
+    is_typing: bool,
+) -> dict:
+    return jsonable_encoder(
+        WsTypingUpdatedEvent(
+            payload=WsTypingUpdatedPayload(
+                room_id=room_id,
+                user_id=user_id,
+                is_typing=is_typing,
+                ts=int(time()),
+            )
+        )
+    )
+
+
 async def handle_room_chat(
     websocket: WebSocket,
     room_id: str,
@@ -131,6 +153,7 @@ async def handle_room_chat(
         payload["sub"],
         subprotocol=CHAT_SUBPROTOCOL,
     )
+    user_id = payload["sub"]
     last_activity_at = monotonic()
     try:
         while True:
@@ -185,6 +208,46 @@ async def handle_room_chat(
                 )
                 continue
 
+            if event_type == "chat.typing.set":
+                try:
+                    event = WsTypingSetEvent.model_validate(data)
+                except ValidationError:
+                    await _send_error(
+                        websocket,
+                        code="invalid_event",
+                        detail=EXPECTED_EVENT_DETAIL,
+                    )
+                    continue
+
+                await manager.touch(websocket)
+                try:
+                    await rate_limit_service.enforce_ws_typing(
+                        user_id=user_id,
+                        room_id=room_id,
+                    )
+                except HTTPException as exc:
+                    await _send_error(
+                        websocket,
+                        code="rate_limit_exceeded",
+                        detail=exc.detail,
+                    )
+                    continue
+
+                await dragonfly.set_ws_typing_state(
+                    room_id=room_id,
+                    user_id=user_id,
+                    is_typing=event.payload.is_typing,
+                )
+                await manager.publish(
+                    room_id,
+                    _typing_updated_event(
+                        room_id=room_id,
+                        user_id=user_id,
+                        is_typing=event.payload.is_typing,
+                    ),
+                )
+                continue
+
             if event_type != "chat.message.create":
                 await _send_error(
                     websocket,
@@ -209,7 +272,7 @@ async def handle_room_chat(
 
             try:
                 await rate_limit_service.enforce_ws_message(
-                    user_id=payload["sub"],
+                    user_id=user_id,
                     room_id=room_id,
                 )
             except HTTPException as exc:
@@ -224,7 +287,7 @@ async def handle_room_chat(
             await manager.touch(websocket)
             lock_token = await dragonfly.acquire_ws_idempotency_lock(
                 room_id=room_id,
-                user_id=payload["sub"],
+                user_id=user_id,
                 idempotency_key=event.payload.idempotency_key,
             )
             if not lock_token:
@@ -240,7 +303,7 @@ async def handle_room_chat(
             try:
                 existing_message_id = await dragonfly.get_ws_idempotency_message_id(
                     room_id=room_id,
-                    user_id=payload["sub"],
+                    user_id=user_id,
                     idempotency_key=event.payload.idempotency_key,
                 )
                 if existing_message_id:
@@ -255,12 +318,26 @@ async def handle_room_chat(
 
                 message = await message_service.send(
                     data=message_input,
-                    sender_id=payload["sub"],
+                    sender_id=user_id,
                 )
                 message_payload = serialize_message_response(message)
+                typing_cleared = await dragonfly.set_ws_typing_state(
+                    room_id=room_id,
+                    user_id=user_id,
+                    is_typing=False,
+                )
+                if typing_cleared:
+                    await manager.publish(
+                        room_id,
+                        _typing_updated_event(
+                            room_id=room_id,
+                            user_id=user_id,
+                            is_typing=False,
+                        ),
+                    )
                 await dragonfly.set_ws_idempotency_message_id(
                     room_id=room_id,
-                    user_id=payload["sub"],
+                    user_id=user_id,
                     idempotency_key=event.payload.idempotency_key,
                     message_id=str(message.id),
                 )
@@ -286,11 +363,25 @@ async def handle_room_chat(
             finally:
                 await dragonfly.release_ws_idempotency_lock(
                     room_id=room_id,
-                    user_id=payload["sub"],
+                    user_id=user_id,
                     idempotency_key=event.payload.idempotency_key,
                     token=lock_token,
                 )
     except WebSocketDisconnect:
         pass
     finally:
+        typing_cleared = await dragonfly.set_ws_typing_state(
+            room_id=room_id,
+            user_id=user_id,
+            is_typing=False,
+        )
+        if typing_cleared:
+            await manager.publish(
+                room_id,
+                _typing_updated_event(
+                    room_id=room_id,
+                    user_id=user_id,
+                    is_typing=False,
+                ),
+            )
         await manager.disconnect(websocket, room_id)

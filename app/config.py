@@ -33,9 +33,12 @@ class Settings(BaseSettings):
     ws_heartbeat_interval_seconds: int = 30
     ws_idle_timeout_seconds: int = 90
     ws_presence_ttl_seconds: int = 180
+    ws_typing_ttl_seconds: int = 8
     ws_message_idempotency_ttl_seconds: int = 300
     ws_rate_limit_window_seconds: int = 5
     ws_rate_limit_max_messages: int = 20
+    ws_typing_rate_limit_window_seconds: int = 5
+    ws_typing_rate_limit_max_events: int = 30
     auth_user_cutoff_ttl_seconds: int = 3600
     auth_refresh_lock_ttl_seconds: int = 5
     authz_cache_ttl_seconds: int = 60

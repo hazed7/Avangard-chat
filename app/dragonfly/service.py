@@ -133,6 +133,15 @@ class DragonflyService:
             failure_policy=self._settings.dragonfly_fail_policy_rate_limit,
         )
 
+    async def enforce_ws_typing_rate_limit(self, *, user_id: str, room_id: str) -> None:
+        await self.enforce_rate_limit(
+            key=keys.rl_ws_typing(self._prefix, user_id, room_id),
+            limit=self._settings.ws_typing_rate_limit_max_events,
+            window_seconds=self._settings.ws_typing_rate_limit_window_seconds,
+            detail="Too many typing events. Slow down.",
+            failure_policy=self._settings.dragonfly_fail_policy_rate_limit,
+        )
+
     async def publish_room_event(self, room_id: str, payload: dict[str, Any]) -> None:
         channel = keys.ws_room_channel(self._prefix, room_id)
         try:
@@ -244,6 +253,32 @@ class DragonflyService:
             if user_id:
                 online_users.add(user_id)
         return sorted(online_users)
+
+    async def set_ws_typing_state(
+        self,
+        *,
+        room_id: str,
+        user_id: str,
+        is_typing: bool,
+    ) -> bool:
+        key = keys.ws_typing_state(self._prefix, room_id, user_id)
+        try:
+            if is_typing:
+                await self._adapter.set_text(
+                    key,
+                    "1",
+                    ttl_seconds=self._settings.ws_typing_ttl_seconds,
+                )
+                return True
+            deleted = await self._adapter.delete(key)
+            return deleted > 0
+        except Exception as exc:  # noqa: BLE001
+            await self._handle_backend_failure(
+                policy=self._settings.dragonfly_fail_policy_ws_presence,
+                feature="ws_typing_set",
+                exc=exc,
+            )
+            return False
 
     async def revoke_jti(self, jti: str, ttl_seconds: int) -> None:
         key = keys.auth_revoked_jti(self._prefix, jti)

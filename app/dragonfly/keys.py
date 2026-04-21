@@ -17,6 +17,10 @@ def rl_ws_message(prefix: str, user_id: str, room_id: str) -> str:
     return f"{prefix}:rl:ws:message:{user_id}:{room_id}"
 
 
+def rl_ws_typing(prefix: str, user_id: str, room_id: str) -> str:
+    return f"{prefix}:rl:ws:typing:{user_id}:{room_id}"
+
+
 def abuse_auth_ip(prefix: str, ip: str) -> str:
     return f"{prefix}:abuse:auth:ip:{ip}"
 
@@ -59,6 +63,10 @@ def ws_presence_user_conn(
     prefix: str, user_id: str, room_id: str, connection_id: str
 ) -> str:
     return f"{prefix}:ws:presence:user:{user_id}:room:{room_id}:conn:{connection_id}"
+
+
+def ws_typing_state(prefix: str, room_id: str, user_id: str) -> str:
+    return f"{prefix}:ws:typing:room:{room_id}:user:{user_id}"
 
 
 def auth_revoked_jti(prefix: str, jti: str) -> str:
