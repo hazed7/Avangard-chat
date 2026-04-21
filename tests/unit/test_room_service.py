@@ -1,4 +1,5 @@
 import asyncio
+from dataclasses import dataclass
 
 import pytest
 from fastapi import HTTPException
@@ -6,16 +7,40 @@ from pymongo.errors import DuplicateKeyError
 
 from app.modules.rooms.schemas import DirectRoomCreate
 from app.modules.rooms.service import RoomService
-from app.modules.users.model import User
 
 
-def _build_user(user_id: str) -> User:
-    return User(
-        _id=user_id,
-        username=f"user-{user_id}",
-        full_name=f"User {user_id}",
-        password_hash="hash",
-    )
+@dataclass
+class _FakeUser:
+    id: str
+
+
+class _FakeChatRoom:
+    insert_attempts = 0
+    fail_insert_until_attempt = 0
+
+    def __init__(
+        self,
+        *,
+        name,
+        is_group: bool,
+        dm_key: str,
+        members: list[_FakeUser],
+        created_by: _FakeUser,
+    ) -> None:
+        self.name = name
+        self.is_group = is_group
+        self.dm_key = dm_key
+        self.members = members
+        self.created_by = created_by
+
+    @classmethod
+    async def find_one(cls, _query: dict):
+        return None
+
+    async def insert(self) -> None:
+        type(self).insert_attempts += 1
+        if type(self).insert_attempts <= type(self).fail_insert_until_attempt:
+            raise DuplicateKeyError("duplicate dm key")
 
 
 def _service() -> RoomService:
@@ -31,25 +56,20 @@ def test_get_or_create_dm_handles_duplicate_without_raw_db_error(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     service = _service()
-    creator = _build_user("creator")
-    peer = _build_user("peer")
+    creator = _FakeUser(id="creator")
+    peer = _FakeUser(id="peer")
 
-    async def fake_get_user_or_401(user_id: str) -> User:
+    async def fake_get_user_or_401(user_id: str) -> _FakeUser:
         return creator if user_id == "creator" else peer
 
-    async def fake_get_users_or_400(user_ids: list[str]) -> list[User]:
+    async def fake_get_users_or_400(user_ids: list[str]) -> list[_FakeUser]:
         return [creator if user_id == "creator" else peer for user_id in user_ids]
-
-    async def fake_find_one(_query: dict):
-        return None
-
-    async def fake_insert(self) -> None:  # noqa: ANN001
-        raise DuplicateKeyError("duplicate dm key")
 
     monkeypatch.setattr(service, "_get_user_or_401", fake_get_user_or_401)
     monkeypatch.setattr(service, "_get_users_or_400", fake_get_users_or_400)
-    monkeypatch.setattr("app.modules.rooms.service.ChatRoom.find_one", fake_find_one)
-    monkeypatch.setattr("app.modules.rooms.service.ChatRoom.insert", fake_insert)
+    _FakeChatRoom.insert_attempts = 0
+    _FakeChatRoom.fail_insert_until_attempt = RoomService._DM_CREATE_MAX_RETRIES
+    monkeypatch.setattr("app.modules.rooms.service.ChatRoom", _FakeChatRoom)
 
     with pytest.raises(HTTPException) as exc:
         asyncio.run(
@@ -66,28 +86,20 @@ def test_get_or_create_dm_retries_duplicate_and_succeeds(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     service = _service()
-    creator = _build_user("creator")
-    peer = _build_user("peer")
-    insert_attempts = {"count": 0}
+    creator = _FakeUser(id="creator")
+    peer = _FakeUser(id="peer")
 
-    async def fake_get_user_or_401(user_id: str) -> User:
+    async def fake_get_user_or_401(user_id: str) -> _FakeUser:
         return creator if user_id == "creator" else peer
 
-    async def fake_get_users_or_400(user_ids: list[str]) -> list[User]:
+    async def fake_get_users_or_400(user_ids: list[str]) -> list[_FakeUser]:
         return [creator if user_id == "creator" else peer for user_id in user_ids]
-
-    async def fake_find_one(_query: dict):
-        return None
-
-    async def fake_insert(self) -> None:  # noqa: ANN001
-        insert_attempts["count"] += 1
-        if insert_attempts["count"] == 1:
-            raise DuplicateKeyError("duplicate dm key")
 
     monkeypatch.setattr(service, "_get_user_or_401", fake_get_user_or_401)
     monkeypatch.setattr(service, "_get_users_or_400", fake_get_users_or_400)
-    monkeypatch.setattr("app.modules.rooms.service.ChatRoom.find_one", fake_find_one)
-    monkeypatch.setattr("app.modules.rooms.service.ChatRoom.insert", fake_insert)
+    _FakeChatRoom.insert_attempts = 0
+    _FakeChatRoom.fail_insert_until_attempt = 1
+    monkeypatch.setattr("app.modules.rooms.service.ChatRoom", _FakeChatRoom)
 
     room = asyncio.run(
         service.get_or_create_dm(
@@ -98,4 +110,4 @@ def test_get_or_create_dm_retries_duplicate_and_succeeds(
 
     assert room.is_group is False
     assert room.dm_key == "creator:peer"
-    assert insert_attempts["count"] == 2
+    assert _FakeChatRoom.insert_attempts == 2
