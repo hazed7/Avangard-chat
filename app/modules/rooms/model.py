@@ -3,7 +3,7 @@ from typing import List, Optional
 
 from beanie import Document, Link
 from pydantic import Field
-from pymongo import IndexModel
+from pymongo import DESCENDING, IndexModel
 
 from app.modules.users.model import User
 
@@ -19,4 +19,8 @@ class ChatRoom(Document):
     class Settings:
         name = "chat_rooms"
         keep_nulls = False
-        indexes = [IndexModel("dm_key", unique=True, sparse=True)]
+        indexes = [
+            IndexModel("dm_key", unique=True, sparse=True),
+            IndexModel([("created_by", 1), ("created_at", DESCENDING)]),
+            IndexModel([("members", 1), ("created_at", DESCENDING)]),
+        ]
