@@ -23,6 +23,8 @@ logger = get_logger("audit")
 
 
 class RoomService:
+    _DM_CREATE_MAX_RETRIES = 3
+
     def __init__(
         self,
         dragonfly: DragonflyService,
@@ -105,26 +107,30 @@ class RoomService:
         creator = await self._get_user_or_401(creator_id)
 
         dm_key = self._build_dm_key(creator_id, data.user_id)
-        existing = await ChatRoom.find_one({"is_group": False, "dm_key": dm_key})
-        if existing:
-            return existing
-
         members = await self._get_users_or_400([creator_id, data.user_id])
-        room = ChatRoom(
-            name=None,
-            is_group=False,
-            dm_key=dm_key,
-            members=members,
-            created_by=creator,
-        )
-        try:
-            await room.insert()
-        except DuplicateKeyError:
+
+        for _ in range(self._DM_CREATE_MAX_RETRIES):
             existing = await ChatRoom.find_one({"is_group": False, "dm_key": dm_key})
-            if not existing:
-                raise
-            return existing
-        return room
+            if existing:
+                return existing
+
+            room = ChatRoom(
+                name=None,
+                is_group=False,
+                dm_key=dm_key,
+                members=members,
+                created_by=creator,
+            )
+            try:
+                await room.insert()
+                return room
+            except DuplicateKeyError:
+                continue
+
+        raise HTTPException(
+            status_code=503,
+            detail="Temporary direct message creation failure",
+        )
 
     async def get(self, room_id: str) -> ChatRoom | None:
         return await ChatRoom.get(room_id)

@@ -65,21 +65,19 @@ class UnreadCounterService:
             {
                 "room": room_ref,
                 "user": user_ref,
-                "unread_count": {"$gt": 0},
+                "unread_count": {"$exists": True},
             },
-            {
-                "$inc": {"unread_count": -by},
-                "$set": {"updated_at": now},
-            },
+            [
+                {
+                    "$set": {
+                        "unread_count": {
+                            "$max": [0, {"$subtract": ["$unread_count", by]}]
+                        },
+                        "updated_at": now,
+                    }
+                }
+            ],
             upsert=False,
-        )
-        await collection.update_one(
-            {
-                "room": room_ref,
-                "user": user_ref,
-                "unread_count": {"$lt": 0},
-            },
-            {"$set": {"unread_count": 0, "updated_at": now}},
         )
 
     async def set_exact(
