@@ -32,3 +32,4 @@ class InMemoryRateLimiter:
 
 auth_rate_limiter = InMemoryRateLimiter()
 ws_message_rate_limiter = InMemoryRateLimiter()
+ws_connection_rate_limiter = InMemoryRateLimiter()

@@ -4,7 +4,7 @@ from pydantic import ValidationError
 
 from app.config import settings
 from app.dependencies import verify_token
-from app.rate_limit import ws_message_rate_limiter
+from app.rate_limit import ws_connection_rate_limiter, ws_message_rate_limiter
 from app.schema.message import MessageCreate
 from app.schema.ws import (
     WsErrorEvent,
@@ -55,6 +55,13 @@ async def handle_room_chat(websocket: WebSocket, room_id: str) -> None:
         token = _extract_bearer_token(subprotocols)
         payload = await verify_token(token)
         await RoomService.get_for_user(room_id, payload["sub"])
+
+        ws_connection_rate_limiter.check(
+            bucket_key=f"ws-connect:{payload['sub']}",
+            limit=settings.ws_connect_rate_limit_max_attempts,
+            window_seconds=settings.ws_connect_rate_limit_window_seconds,
+            detail="Too many websocket connection attempts. Try again later.",
+        )
     except HTTPException as exc:
         code = 1002 if exc.status_code == 400 else 1008
         await websocket.close(code=code)

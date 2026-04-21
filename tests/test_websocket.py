@@ -187,3 +187,40 @@ def test_websocket_rate_limit_blocks_spam(
             ws.receive_json()
 
     assert exc_info.value.code == 1008
+
+
+def test_websocket_connection_rate_limit_blocks_connect_spam(
+    client: TestClient,
+    monkeypatch: pytest.MonkeyPatch,
+):
+    monkeypatch.setattr(settings, "ws_connect_rate_limit_max_attempts", 2)
+    monkeypatch.setattr(settings, "ws_connect_rate_limit_window_seconds", 60)
+
+    owner = register_user(client, "ws-connect-limit-owner")
+    room = create_room(
+        client,
+        owner["access_token"],
+        member_ids=[],
+        name="ws-connect-limit-room",
+    )
+
+    with client.websocket_connect(
+        _ws_url(room["id"]),
+        subprotocols=_ws_subprotocols(owner["access_token"]),
+    ):
+        pass
+
+    with client.websocket_connect(
+        _ws_url(room["id"]),
+        subprotocols=_ws_subprotocols(owner["access_token"]),
+    ):
+        pass
+
+    with pytest.raises(WebSocketDisconnect) as exc_info:
+        with client.websocket_connect(
+            _ws_url(room["id"]),
+            subprotocols=_ws_subprotocols(owner["access_token"]),
+        ):
+            pass
+
+    assert exc_info.value.code == 1008
