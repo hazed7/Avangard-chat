@@ -7,16 +7,24 @@ class ConnectionManager:
     def __init__(self):
         self.rooms: Dict[str, List[WebSocket]] = {}
 
-    async def connect(self, websocket: WebSocket, room_id: str):
-        await websocket.accept()
+    async def connect(
+        self, websocket: WebSocket, room_id: str, subprotocol: str | None = None
+    ):
+        await websocket.accept(subprotocol=subprotocol)
         self.rooms.setdefault(room_id, []).append(websocket)
 
     def disconnect(self, websocket: WebSocket, room_id: str):
-        if room_id in self.rooms:
-            try:
-                self.rooms[room_id].remove(websocket)
-            except ValueError:
-                pass
+        room_connections = self.rooms.get(room_id)
+        if room_connections is None:
+            return
+
+        try:
+            room_connections.remove(websocket)
+        except ValueError:
+            pass
+
+        if not room_connections:
+            self.rooms.pop(room_id, None)
 
     async def broadcast(self, room_id: str, message: dict):
         dead = []

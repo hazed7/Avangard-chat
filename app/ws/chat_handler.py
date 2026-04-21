@@ -8,16 +8,38 @@ from app.service.message_service import MessageService
 from app.service.room_service import RoomService
 from app.ws.manager import manager
 
+AUTH_SUBPROTOCOL_PREFIX = "auth.bearer."
+CHAT_SUBPROTOCOL = "chat.v1"
 
-async def handle_room_chat(websocket: WebSocket, room_id: str, token: str) -> None:
+
+def _extract_bearer_token(subprotocols: list[str]) -> str:
+    for subprotocol in subprotocols:
+        if subprotocol.startswith(AUTH_SUBPROTOCOL_PREFIX):
+            token = subprotocol.removeprefix(AUTH_SUBPROTOCOL_PREFIX)
+            if token:
+                return token
+    raise HTTPException(status_code=401, detail="Missing bearer token")
+
+
+def _resolve_server_subprotocol(subprotocols: list[str]) -> str | None:
+    if CHAT_SUBPROTOCOL in subprotocols:
+        return CHAT_SUBPROTOCOL
+    return None
+
+
+async def handle_room_chat(websocket: WebSocket, room_id: str) -> None:
+    subprotocols = list(websocket.scope.get("subprotocols", []))
+    server_subprotocol = _resolve_server_subprotocol(subprotocols)
+
     try:
+        token = _extract_bearer_token(subprotocols)
         payload = await verify_token(token)
         await RoomService.get_for_user(room_id, payload["sub"])
     except HTTPException:
         await websocket.close(code=1008)
         return
 
-    await manager.connect(websocket, room_id)
+    await manager.connect(websocket, room_id, subprotocol=server_subprotocol)
     try:
         while True:
             data = await websocket.receive_json()

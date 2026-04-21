@@ -2,12 +2,17 @@ import pytest
 from fastapi.testclient import TestClient
 from starlette.websockets import WebSocketDisconnect
 
+from app.ws.manager import manager
 from tests.test_access_control import create_room
 from tests.test_auth import auth_headers, register_user
 
 
-def _ws_url(room_id: str, token: str) -> str:
-    return f"/ws/{room_id}?token={token}"
+def _ws_url(room_id: str) -> str:
+    return f"/ws/{room_id}"
+
+
+def _ws_subprotocols(token: str) -> list[str]:
+    return ["chat.v1", f"auth.bearer.{token}"]
 
 
 def test_websocket_messages_are_broadcast_and_persisted(client: TestClient):
@@ -22,10 +27,12 @@ def test_websocket_messages_are_broadcast_and_persisted(client: TestClient):
 
     with (
         client.websocket_connect(
-            _ws_url(room["id"], owner["access_token"])
+            _ws_url(room["id"]),
+            subprotocols=_ws_subprotocols(owner["access_token"]),
         ) as owner_ws,
         client.websocket_connect(
-            _ws_url(room["id"], member["access_token"])
+            _ws_url(room["id"]),
+            subprotocols=_ws_subprotocols(member["access_token"]),
         ) as member_ws,
     ):
         owner_ws.send_json({"text": "hello over websocket"})
@@ -58,7 +65,10 @@ def test_websocket_rejects_non_members(client: TestClient):
     )
 
     with pytest.raises(WebSocketDisconnect) as exc_info:
-        with client.websocket_connect(_ws_url(room["id"], outsider["access_token"])):
+        with client.websocket_connect(
+            _ws_url(room["id"]),
+            subprotocols=_ws_subprotocols(outsider["access_token"]),
+        ):
             pass
 
     assert exc_info.value.code == 1008
@@ -73,8 +83,31 @@ def test_websocket_invalid_payload_returns_error(client: TestClient):
         name="invalid-payload-room",
     )
 
-    with client.websocket_connect(_ws_url(room["id"], owner["access_token"])) as ws:
+    with client.websocket_connect(
+        _ws_url(room["id"]),
+        subprotocols=_ws_subprotocols(owner["access_token"]),
+    ) as ws:
         ws.send_json({"unexpected": "payload"})
         error_event = ws.receive_json()
 
     assert error_event == {"type": "error", "detail": "Invalid message payload"}
+
+
+def test_websocket_disconnect_cleans_up_empty_room(client: TestClient):
+    owner = register_user(client, "ws-cleanup-owner")
+    room = create_room(
+        client,
+        owner["access_token"],
+        member_ids=[],
+        name="cleanup-room",
+    )
+
+    assert room["id"] not in manager.rooms
+    with client.websocket_connect(
+        _ws_url(room["id"]),
+        subprotocols=_ws_subprotocols(owner["access_token"]),
+    ):
+        assert room["id"] in manager.rooms
+        assert len(manager.rooms[room["id"]]) == 1
+
+    assert room["id"] not in manager.rooms
