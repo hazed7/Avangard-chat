@@ -13,6 +13,7 @@ dependencies = [
   "pyjwt==2.10.1",
   "pymongo==4.9.2",
   "python-dotenv==1.0.1",
+  "redis==5.2.1",
   "uvicorn[standard]==0.30.6",
   "websockets==13.0",
 ]
@@ -39,3 +40,8 @@ select = ["E", "F", "I"]
 [tool.ruff.format]
 quote-style = "double"
 indent-style = "space"
+
+[tool.pytest.ini_options]
+markers = [
+  "integration: tests using a dragonfly backend",
+]

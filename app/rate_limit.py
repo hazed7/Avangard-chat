@@ -1,35 +1,46 @@
-from collections import defaultdict, deque
-from time import monotonic
-
-from fastapi import HTTPException
+from app.dragonfly.service import DragonflyService
 
 
-class InMemoryRateLimiter:
-    def __init__(self):
-        self._buckets: dict[str, deque[float]] = defaultdict(deque)
+class RateLimitService:
+    def __init__(self, dragonfly: DragonflyService):
+        self._dragonfly = dragonfly
 
-    def check(
+    async def enforce_auth_route(
         self,
-        bucket_key: str,
-        limit: int,
-        window_seconds: int,
-        detail: str = "Too many authentication attempts. Try again later.",
+        *,
+        route: str,
+        ip: str,
+        username: str | None = None,
     ) -> None:
-        now = monotonic()
-        bucket = self._buckets[bucket_key]
+        await self._dragonfly.enforce_auth_throttle(
+            route=route,
+            ip=ip,
+            username=username,
+        )
 
-        while bucket and now - bucket[0] > window_seconds:
-            bucket.popleft()
+    async def enforce_ws_connect(
+        self,
+        *,
+        user_id: str,
+        room_id: str,
+        ip: str,
+    ) -> None:
+        await self._dragonfly.enforce_ws_connect_limits(
+            user_id=user_id,
+            room_id=room_id,
+            ip=ip,
+        )
 
-        if len(bucket) >= limit:
-            raise HTTPException(
-                status_code=429,
-                detail=detail,
-            )
+    async def enforce_ws_handshake(self, *, ip: str) -> None:
+        await self._dragonfly.enforce_ws_handshake_limits(ip=ip)
 
-        bucket.append(now)
-
-
-auth_rate_limiter = InMemoryRateLimiter()
-ws_message_rate_limiter = InMemoryRateLimiter()
-ws_connection_rate_limiter = InMemoryRateLimiter()
+    async def enforce_ws_message(
+        self,
+        *,
+        user_id: str,
+        room_id: str,
+    ) -> None:
+        await self._dragonfly.enforce_ws_message_rate_limit(
+            user_id=user_id,
+            room_id=room_id,
+        )
