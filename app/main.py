@@ -72,6 +72,10 @@ def custom_openapi():
             "type": "http",
             "scheme": "bearer",
             "bearerFormat": "JWT",
+        },
+        "HTTPBearer": {
+            "type": "http",
+            "scheme": "bearer",
         }
     }
     schema["security"] = [{"BearerAuth": []}]
