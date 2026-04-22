@@ -36,6 +36,10 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 15
     needs: [lint-and-architecture]
+    permissions:
+      contents: read
+      id-token: write
+      pull-requests: write
     services:
       dragonfly:
         image: docker.dragonflydb.io/dragonflydb/dragonfly:v1.27.1
@@ -70,15 +74,90 @@ jobs:
               raise SystemExit("Dragonfly did not become ready in time")
           PY
 
-      - name: Run unit and API tests
+      - name: Run unit and API tests with coverage
         env:
           DRAGONFLY_URL: redis://localhost:6380/15
-        run: uv run --group dev pytest tests/unit tests/api
+        run: >-
+          uv run --group dev pytest tests/unit tests/api
+          --cov=app
+          --cov-branch
+          --cov-report=term-missing:skip-covered
+          --cov-report=markdown:coverage-unit-api.md
+          --cov-report=xml:coverage-unit-api.xml
+
+      - name: Add coverage report to GitHub job summary
+        run: |
+          {
+            echo "## Coverage (unit + API)"
+            echo ""
+            cat coverage-unit-api.md
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Post sticky PR coverage comment
+        if: github.event_name == 'pull_request'
+        uses: actions/github-script@v7
+        env:
+          COVERAGE_MD_PATH: coverage-unit-api.md
+        with:
+          script: |
+            const fs = require("fs");
+            const marker = "<!-- unit-api-coverage-report -->";
+            const coverage = fs.readFileSync(process.env.COVERAGE_MD_PATH, "utf8");
+            const body = `${marker}
+            ## Coverage (unit + API)
+
+            <details><summary>Show coverage table</summary>
+
+            ${coverage}
+
+            </details>`;
+
+            const { owner, repo } = context.repo;
+            const issue_number = context.payload.pull_request.number;
+            const comments = await github.paginate(
+              github.rest.issues.listComments,
+              { owner, repo, issue_number, per_page: 100 },
+            );
+
+            const existing = comments.find(
+              (comment) =>
+                comment.user?.type === "Bot" &&
+                typeof comment.body === "string" &&
+                comment.body.includes(marker),
+            );
+
+            if (existing) {
+              await github.rest.issues.updateComment({
+                owner,
+                repo,
+                comment_id: existing.id,
+                body,
+              });
+            } else {
+              await github.rest.issues.createComment({
+                owner,
+                repo,
+                issue_number,
+                body,
+              });
+            }
+
+      - name: Upload unit and API coverage to Codecov
+        uses: codecov/codecov-action@v6
+        with:
+          use_oidc: true
+          files: ./coverage-unit-api.xml
+          flags: unit-api
+          disable_search: true
+          fail_ci_if_error: true
 
   test-integration-dragonfly:
     runs-on: ubuntu-latest
     timeout-minutes: 10
     needs: [lint-and-architecture]
+    permissions:
+      contents: read
+      id-token: write
     services:
       dragonfly:
         image: docker.dragonflydb.io/dragonflydb/dragonfly:v1.27.1
@@ -113,15 +192,32 @@ jobs:
               raise SystemExit("Dragonfly did not become ready in time")
           PY
 
-      - name: Run Dragonfly integration tests
+      - name: Run Dragonfly integration tests with coverage
         env:
           DRAGONFLY_URL: redis://localhost:6380/15
-        run: uv run --group dev pytest tests/integration/dragonfly
+        run: >-
+          uv run --group dev pytest tests/integration/dragonfly
+          --cov=app
+          --cov-branch
+          --cov-report=term-missing:skip-covered
+          --cov-report=xml:coverage-integration-dragonfly.xml
+
+      - name: Upload Dragonfly integration coverage to Codecov
+        uses: codecov/codecov-action@v6
+        with:
+          use_oidc: true
+          files: ./coverage-integration-dragonfly.xml
+          flags: integration-dragonfly
+          disable_search: true
+          fail_ci_if_error: true
 
   test-integration-typesense:
     runs-on: ubuntu-latest
     timeout-minutes: 10
     needs: [lint-and-architecture]
+    permissions:
+      contents: read
+      id-token: write
     services:
       typesense:
         image: typesense/typesense:27.1
@@ -160,12 +256,26 @@ jobs:
               raise SystemExit("Typesense did not become ready in time")
           PY
 
-      - name: Run Typesense integration tests
+      - name: Run Typesense integration tests with coverage
         env:
           TYPESENSE_URL: http://localhost:8109
           TYPESENSE_API_KEY: ci-typesense-key
           REQUIRE_TYPESENSE_INTEGRATION: "1"
-        run: uv run --group dev pytest tests/integration/typesense
+        run: >-
+          uv run --group dev pytest tests/integration/typesense
+          --cov=app
+          --cov-branch
+          --cov-report=term-missing:skip-covered
+          --cov-report=xml:coverage-integration-typesense.xml
+
+      - name: Upload Typesense integration coverage to Codecov
+        uses: codecov/codecov-action@v6
+        with:
+          use_oidc: true
+          files: ./coverage-integration-typesense.xml
+          flags: integration-typesense
+          disable_search: true
+          fail_ci_if_error: true
 
   compose-smoke:
     runs-on: ubuntu-latest
