@@ -76,7 +76,7 @@ def custom_openapi():
         "HTTPBearer": {
             "type": "http",
             "scheme": "bearer",
-        }
+        },
     }
     schema["security"] = [{"BearerAuth": []}]
     app.openapi_schema = schema
