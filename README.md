@@ -10,12 +10,14 @@
   <img src="https://img.shields.io/badge/MongoDB-47A248?style=for-the-badge&logo=mongodb&logoColor=white" alt="MongoDB" />
   <img src="https://img.shields.io/badge/DragonflyDB-FF3D00?style=for-the-badge&logoColor=white" alt="DragonflyDB" />
   <img src="https://img.shields.io/badge/Typesense-D90368?style=for-the-badge&logoColor=white" alt="Typesense" />
+  <img src="https://img.shields.io/badge/LiveKit-1F8EF1?style=for-the-badge&logoColor=white" alt="LiveKit" />
 </p>
 
 Бэкенд чат-приложения на FastAPI:
 - JWT-аутентификация и refresh-сессии
 - групповые чаты и личные сообщения
 - realtime-обмен сообщениями через ws
+- аудиозвонки через LiveKit
 - зашифрованное хранение сообщений
 - полнотекстовый поиск (Typesense)
 - счётчики непрочитанных
@@ -37,15 +39,34 @@
 - WebSocket
   - realtime-сообщения, presence, typing, delivery-state события
   - идемпотентность отправки сообщений
+- Calls
+  - invite / ringing / join / leave / end для аудиозвонков
+  - LiveKit join token выдаётся бэком после проверки доступа к комнате
+  - история звонков по комнате
+
+## Аудиозвонки
+
+- Для транспорта используется `LiveKit`
+
+Основные эндпоинты:
+- `POST /call/room/{room_id}/invite`
+- `GET /call/room/{room_id}/active`
+- `POST /call/{call_id}/ringing`
+- `POST /call/{call_id}/join`
+- `POST /call/{call_id}/leave`
+- `POST /call/{call_id}/end`
+- `GET /call/{call_id}/participants`
+- `GET /call/room/{room_id}/history`
+- `GET /call/missed`
 
 ## Шифрование и хранение сообщений
 
 - Текст сообщений хранится в MongoDB в зашифрованном виде.
-- Алгоритм: `AES-256-GCM`.
+- Алгоритм: `AES-256-GCM`
 - Для каждого сообщения используется отдельный случайный nonce.
-- Контекст привязывает шифртекст к `room_id` и `sender_id`.
+- Контекст привязывает шифртекст к `room_id` и `sender_id`
 - Хранятся поля: ciphertext, nonce, key id, aad.
-- Удалённые сообщения soft-delete (`is_deleted=true`) и в API отдаются как `[deleted]`.
+- Удалённые сообщения soft-delete (`is_deleted=true`) и в API отдаются как `[deleted]`
 
 ## Фоновые воркеры
 
@@ -63,7 +84,19 @@
 docker compose up -d --build
 ```
 
-API: `http://localhost:8000`.
+API: `http://localhost:8000`
+
+LiveKit для локальной разработки:
+- Signal/API: `ws://localhost:7880`
+- ICE TCP fallback: `localhost:7881`
+- ICE UDP mux: `localhost:7882/udp`
+
+Compose stack использует:
+- `compose.yml`
+- `deploy/livekit.yaml`
+
+Если фронт запускается вне докера, он должен подключаться к `LIVEKIT_URL`
+По дефолту `ws://localhost:7880`, а бэк ходит к LiveKit по `LIVEKIT_API_URL=http://livekit:7880`
 
 Некоторые эндпоинты:
 - Swagger UI: `http://localhost:8000/docs`
@@ -99,10 +132,10 @@ uv run --group dev pre-commit run --all-files
 ## Что пока не реализовано
 
 - api загрузки файлов / медиа-хранилище
-- speech-to-text / text-to-speech
-- AI-модерация, перевод, саммаризация
+- видеозвонки / screen share
+- recordings / egress
 - фронт
 
 ## Лицензия
 
-См. [LICENSE](LICENSE).
+См. [LICENSE](LICENSE)
