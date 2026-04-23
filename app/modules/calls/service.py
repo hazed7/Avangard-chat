@@ -70,11 +70,15 @@ class CallService:
             raise HTTPException(status_code=404, detail="Call not found")
         return call
 
-    async def _get_call_for_user(self, call_id: str, user_id: str) -> CallSession:
+    async def _get_call_for_user(
+        self,
+        call_id: str,
+        user_id: str,
+    ) -> tuple[CallSession, ChatRoom]:
         call = await self._get_call_or_404(call_id)
         room_id = linked_document_id(call.room)
-        await self.room_service.get_for_user(room_id, user_id)
-        return call
+        room = await self.room_service.get_for_user(room_id, user_id)
+        return call, room
 
     async def _get_call_for_participant(
         self,
@@ -241,12 +245,11 @@ class CallService:
 
     async def _ensure_call_manager(
         self,
+        room: ChatRoom,
         call: CallSession,
         *,
         actor_id: str,
     ) -> None:
-        room_id = linked_document_id(call.room)
-        room = await self.room_service.get_for_user(room_id, actor_id)
         room_owner_id = linked_document_id(room.created_by)
         initiator_id = linked_document_id(call.initiated_by)
         if actor_id not in {room_owner_id, initiator_id}:
@@ -300,12 +303,11 @@ class CallService:
         return serialize_call_session_response(call)
 
     async def join(self, *, call_id: str, user_id: str) -> CallJoinResponse:
-        call = await self._get_call_for_user(call_id, user_id)
+        call, room = await self._get_call_for_user(call_id, user_id)
         if call.status == "ended":
             raise HTTPException(status_code=409, detail="Call has already ended")
 
         room_id = linked_document_id(call.room)
-        room = await self.room_service.get_for_user(room_id, user_id)
         user = await self._get_user_or_404(user_id)
         now = datetime.now(UTC)
         state = self._ensure_participant_state(
@@ -359,7 +361,7 @@ class CallService:
         )
 
     async def mark_ringing(self, *, call_id: str, user_id: str) -> CallSessionResponse:
-        call = await self._get_call_for_user(call_id, user_id)
+        call, _ = await self._get_call_for_user(call_id, user_id)
         if call.status == "ended":
             raise HTTPException(status_code=409, detail="Call has already ended")
 
@@ -383,7 +385,7 @@ class CallService:
         return serialize_call_session_response(call)
 
     async def leave(self, *, call_id: str, user_id: str) -> CallSessionResponse:
-        call = await self._get_call_for_user(call_id, user_id)
+        call, _ = await self._get_call_for_user(call_id, user_id)
         room_id = linked_document_id(call.room)
         state = self._participant_state(call, user_id)
         if call.status == "ended" or state is None or state.left_at is not None:
@@ -440,8 +442,8 @@ class CallService:
         return serialize_call_session_response(call)
 
     async def end(self, *, call_id: str, user_id: str) -> CallSessionResponse:
-        call = await self._get_call_for_user(call_id, user_id)
-        await self._ensure_call_manager(call, actor_id=user_id)
+        call, room = await self._get_call_for_user(call_id, user_id)
+        await self._ensure_call_manager(room, call, actor_id=user_id)
         ended_reason = "ended" if call.answered_at else "cancelled"
         try:
             call = await self._end_call(
@@ -459,7 +461,7 @@ class CallService:
         call_id: str,
         user_id: str,
     ) -> CallSessionResponse:
-        call = await self._get_call_for_user(call_id, user_id)
+        call, _ = await self._get_call_for_user(call_id, user_id)
         return serialize_call_session_response(call)
 
     async def remove_participant(
@@ -469,8 +471,8 @@ class CallService:
         actor_id: str,
         target_user_id: str,
     ) -> CallSessionResponse:
-        call = await self._get_call_for_user(call_id, actor_id)
-        await self._ensure_call_manager(call, actor_id=actor_id)
+        call, room = await self._get_call_for_user(call_id, actor_id)
+        await self._ensure_call_manager(room, call, actor_id=actor_id)
         room_id = linked_document_id(call.room)
         state = self._participant_state(call, target_user_id)
         if state is None or call.status == "ended":
