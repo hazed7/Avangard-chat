@@ -1,8 +1,16 @@
-# Avangard Chat Backend
+[![CI](https://img.shields.io/github/actions/workflow/status/hazed7/Avangard-chat/ci.yml?branch=main&label=CI&style=flat-square&logo=githubactions)](https://github.com/hazed7/Avangard-chat/actions/workflows/ci.yml)
+[![License](https://img.shields.io/badge/license-proprietary-red?style=flat-square&logo=opensourceinitiative&logoColor=white)](https://github.com/hazed7/Avangard-chat/blob/main/LICENSE)
+[![Coverage](https://codecov.io/gh/hazed7/Avangard-chat/graph/badge.svg)](https://codecov.io/gh/hazed7/Avangard-chat)
 
-[![CI](https://github.com/DiM3NT0R/Avangard-chat/actions/workflows/ci.yml/badge.svg)](https://github.com/DiM3NT0R/Avangard-chat/actions/workflows/ci.yml)
-[![License](https://img.shields.io/badge/license-proprietary-red)](https://github.com/DiM3NT0R/Avangard-chat/blob/main/LICENSE)
-[![Coverage](https://codecov.io/gh/DiM3NT0R/Avangard-chat/graph/badge.svg)](https://codecov.io/gh/DiM3NT0R/Avangard-chat)
+## Стек
+
+<p align="left">
+  <img src="https://img.shields.io/badge/Python-3776AB?style=for-the-badge&logo=python&logoColor=white" alt="Python" />
+  <img src="https://img.shields.io/badge/FastAPI-009688?style=for-the-badge&logo=fastapi&logoColor=white" alt="FastAPI" />
+  <img src="https://img.shields.io/badge/MongoDB-47A248?style=for-the-badge&logo=mongodb&logoColor=white" alt="MongoDB" />
+  <img src="https://img.shields.io/badge/DragonflyDB-FF3D00?style=for-the-badge&logoColor=white" alt="DragonflyDB" />
+  <img src="https://img.shields.io/badge/Typesense-D90368?style=for-the-badge&logoColor=white" alt="Typesense" />
+</p>
 
 Бэкенд чат-приложения на FastAPI:
 - JWT-аутентификация и refresh-сессии
@@ -12,7 +20,7 @@
 - полнотекстовый поиск (Typesense)
 - счётчики непрочитанных
 
-## Что реализовано сейчас
+## Что реализовано
 
 - Auth
   - регистрация, логин, refresh, logout
@@ -49,21 +57,13 @@
 - Unread reconciliation worker
   - периодически пересчитывает unread-счётчики и исправляет дрейф
 
-## Стэк
-
-- FastAPI + Pydantic v2
-- MongoDB + Beanie + Motor
-- DragonflyDB (Redis protocol): rate limit, auth/session state, кэш, websocket presence/typing/pubsub
-- Typesense: полнотекстовый поиск
-- uv + pytest + ruff
-
 ## Запуск
 
 ```bash
 docker compose up -d --build
 ```
 
-API `http://localhost:8000`.
+API: `http://localhost:8000`.
 
 Некоторые эндпоинты:
 - Swagger UI: `http://localhost:8000/docs`
@@ -77,6 +77,21 @@ API `http://localhost:8000`.
 uv run --group dev ruff check .
 uv run --group dev ruff format --check .
 uv run --group dev pytest tests/unit tests/api
+```
+
+## Git hooks
+
+Выполняются автоматически при коммите.
+
+Сетап:
+```bash
+uv sync --group dev
+uv run --group dev pre-commit install
+```
+
+Погнать вручную:
+```bash
+uv run --group dev pre-commit run --all-files
 ```
 
 ## Что пока не реализовано
