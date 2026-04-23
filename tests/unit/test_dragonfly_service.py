@@ -505,10 +505,19 @@ def test_get_user_cutoff_failure_raises_when_closed() -> None:
     assert exc.value.status_code == 503
 
 
-def test_get_room_access_cache_failure_always_fails_closed() -> None:
+def test_get_room_access_cache_failure_returns_none_when_open() -> None:
     adapter = FakeAdapter()
     adapter.raise_methods.add("get_text")
     service = _service(adapter, dragonfly_fail_policy_authz_cache="open")
+
+    cached = asyncio.run(service.get_room_access_cache("room-1", "user-1"))
+    assert cached is None
+
+
+def test_get_room_access_cache_failure_raises_when_closed() -> None:
+    adapter = FakeAdapter()
+    adapter.raise_methods.add("get_text")
+    service = _service(adapter, dragonfly_fail_policy_authz_cache="closed")
 
     with pytest.raises(HTTPException) as exc:
         asyncio.run(service.get_room_access_cache("room-1", "user-1"))

@@ -196,3 +196,18 @@ def test_logout_clears_refresh_cookie(client: TestClient):
     set_cookie_header = response.headers.get("set-cookie", "")
     assert settings.refresh_cookie.name in set_cookie_header
     assert "Max-Age=0" in set_cookie_header or "expires=" in set_cookie_header.lower()
+
+
+def test_logout_with_invalid_bearer_still_clears_refresh_cookie(client: TestClient):
+    register_payload = register_user(client, "logout-invalid-bearer-user")
+    assert register_payload["access_token"]
+    assert client.cookies.get(settings.refresh_cookie.name)
+
+    response = client.post(
+        "/auth/logout",
+        headers=auth_headers("not-a-valid-access-token"),
+    )
+    assert response.status_code == 200
+    set_cookie_header = response.headers.get("set-cookie", "")
+    assert settings.refresh_cookie.name in set_cookie_header
+    assert "Max-Age=0" in set_cookie_header or "expires=" in set_cookie_header.lower()

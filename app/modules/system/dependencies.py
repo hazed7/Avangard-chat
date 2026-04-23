@@ -107,7 +107,10 @@ async def verify_optional_token(
 ) -> dict | None:
     if token is None:
         return None
-    return await validate_access_token(token=token, dragonfly=dragonfly)
+    try:
+        return await validate_access_token(token=token, dragonfly=dragonfly)
+    except HTTPException:
+        return None
 
 
 def get_rate_limit_service(
