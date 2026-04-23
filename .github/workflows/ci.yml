@@ -143,7 +143,7 @@ jobs:
             }
 
       - name: Upload unit and API coverage to Codecov
-        uses: codecov/codecov-action@v6
+        uses: codecov/codecov-action@v5
         with:
           use_oidc: true
           files: ./coverage-unit-api.xml
