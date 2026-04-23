@@ -106,6 +106,21 @@ class TypesenseSettings(BaseModel):
     fail_policy: FailPolicy
 
 
+class LiveKitTimeoutSettings(BaseModel):
+    connect_seconds: float
+    read_seconds: float
+
+
+class LiveKitSettings(BaseModel):
+    url: str
+    api_url: str
+    api_key: str
+    api_secret: str
+    room_prefix: str
+    token_ttl_seconds: int
+    timeout: LiveKitTimeoutSettings
+
+
 class MessageEncryptionSettings(BaseModel):
     active_key_id: str
     keys: dict[str, str]
@@ -136,6 +151,15 @@ class Settings(BaseSettings):
     typesense_connect_timeout_seconds: float = 2.0
     typesense_read_timeout_seconds: float = 2.0
     typesense_fail_policy: FailPolicy = "closed"
+
+    livekit_url: str = "ws://localhost:7880"
+    livekit_api_url: str = "http://livekit:7880"
+    livekit_api_key: str = "devkey"
+    livekit_api_secret: str = "secret"
+    livekit_room_prefix: str = "chat-room"
+    livekit_token_ttl_seconds: int = 60
+    livekit_connect_timeout_seconds: float = 2.0
+    livekit_read_timeout_seconds: float = 2.0
 
     jwt_secret_key: str
     refresh_token_secret_key: str
@@ -337,6 +361,21 @@ class Settings(BaseSettings):
             user_cutoff_ttl_seconds=self.auth_user_cutoff_ttl_seconds,
             refresh_lock_ttl_seconds=self.auth_refresh_lock_ttl_seconds,
             authz_cache_ttl_seconds=self.authz_cache_ttl_seconds,
+        )
+
+    @property
+    def livekit(self) -> LiveKitSettings:
+        return LiveKitSettings(
+            url=self.livekit_url,
+            api_url=self.livekit_api_url,
+            api_key=self.livekit_api_key,
+            api_secret=self.livekit_api_secret,
+            room_prefix=self.livekit_room_prefix,
+            token_ttl_seconds=self.livekit_token_ttl_seconds,
+            timeout=LiveKitTimeoutSettings(
+                connect_seconds=self.livekit_connect_timeout_seconds,
+                read_seconds=self.livekit_read_timeout_seconds,
+            ),
         )
 
     @property

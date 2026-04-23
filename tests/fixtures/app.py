@@ -1,4 +1,5 @@
 import asyncio
+from datetime import UTC, datetime, timedelta
 from uuid import uuid4
 
 import pytest
@@ -7,6 +8,7 @@ from fastapi.testclient import TestClient
 from mongomock_motor import AsyncMongoMockClient
 
 from app.main import app
+from app.modules.calls.model import CallSession
 from app.modules.messages.model import Message
 from app.modules.messages.unread.model import RoomUnreadCounter
 from app.modules.rooms.model import ChatRoom
@@ -95,6 +97,48 @@ class FakeTypesenseService:
         return ids, has_more
 
 
+class FakeLiveKitService:
+    def __init__(self) -> None:
+        self.removed_participants: list[tuple[str, str]] = []
+        self.deleted_rooms: list[str] = []
+
+    @property
+    def public_url(self) -> str:
+        return "ws://livekit.test"
+
+    async def startup(self) -> None:
+        return
+
+    async def shutdown(self) -> None:
+        return
+
+    async def ping(self) -> bool:
+        return True
+
+    def room_name(self, room_id: str) -> str:
+        return f"chat-room:{room_id}"
+
+    def create_join_token(
+        self,
+        *,
+        room_id: str,
+        participant_identity: str,
+        participant_name: str,
+        metadata: dict,
+    ) -> tuple[str, datetime]:
+        del participant_name, metadata
+        return (
+            f"token-{room_id}-{participant_identity}",
+            datetime.now(UTC) + timedelta(minutes=1),
+        )
+
+    async def remove_participant(self, *, room_id: str, user_id: str) -> None:
+        self.removed_participants.append((room_id, user_id))
+
+    async def delete_room(self, *, room_id: str) -> None:
+        self.deleted_rooms.append(room_id)
+
+
 async def _clear_dragonfly_keys() -> None:
     adapter = get_dragonfly_adapter_singleton()
     await adapter.startup()
@@ -109,11 +153,19 @@ def client(monkeypatch: pytest.MonkeyPatch) -> TestClient:
     mongo_client = AsyncMongoMockClient()
     db_name = f"test_db_{uuid4().hex}"
     fake_typesense = FakeTypesenseService()
+    fake_livekit = FakeLiveKitService()
 
     async def init_test_db() -> None:
         await init_beanie(
             database=mongo_client[db_name],
-            document_models=[User, Message, ChatRoom, RoomUnreadCounter, CleanupJob],
+            document_models=[
+                User,
+                Message,
+                ChatRoom,
+                RoomUnreadCounter,
+                CleanupJob,
+                CallSession,
+            ],
         )
 
     asyncio.run(_clear_dragonfly_keys())
@@ -126,6 +178,14 @@ def client(monkeypatch: pytest.MonkeyPatch) -> TestClient:
     monkeypatch.setattr(
         "app.modules.system.dependencies.get_typesense_service_singleton",
         lambda: fake_typesense,
+    )
+    monkeypatch.setattr(
+        "app.main.get_livekit_service_singleton",
+        lambda: fake_livekit,
+    )
+    monkeypatch.setattr(
+        "app.modules.system.dependencies.get_livekit_service_singleton",
+        lambda: fake_livekit,
     )
 
     with TestClient(app) as test_client:

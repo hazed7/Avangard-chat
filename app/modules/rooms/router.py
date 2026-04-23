@@ -1,5 +1,6 @@
 from fastapi import APIRouter, Depends, HTTPException, Query
 
+from app.modules.calls.service import CallService
 from app.modules.rooms.schemas import (
     ChatRoomResponse,
     DirectRoomCreate,
@@ -9,7 +10,11 @@ from app.modules.rooms.schemas import (
     serialize_chat_room_response,
 )
 from app.modules.rooms.service import RoomService
-from app.modules.system.dependencies import get_room_service, verify_token
+from app.modules.system.dependencies import (
+    get_call_service,
+    get_room_service,
+    verify_token,
+)
 from app.platform.http.errors import error_responses
 from app.platform.http.schemas import OperationOkResponse
 
@@ -87,8 +92,14 @@ async def remove_group_member(
     user_id: str,
     user: dict = Depends(verify_token),
     room_service: RoomService = Depends(get_room_service),
+    call_service: CallService = Depends(get_call_service),
 ):
     room = await room_service.remove_group_member(
+        room_id=room_id,
+        user_id=user_id,
+        actor_id=user["sub"],
+    )
+    await call_service.handle_room_member_removed(
         room_id=room_id,
         user_id=user_id,
         actor_id=user["sub"],
@@ -134,6 +145,8 @@ async def delete_room(
     room_id: str,
     user: dict = Depends(verify_token),
     room_service: RoomService = Depends(get_room_service),
+    call_service: CallService = Depends(get_call_service),
 ):
     await room_service.delete_room(room_id, user["sub"])
+    await call_service.handle_room_deleted(room_id=room_id, actor_id=user["sub"])
     return OperationOkResponse()

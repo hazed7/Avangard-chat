@@ -4,9 +4,14 @@ from fastapi import APIRouter, Depends
 from fastapi.responses import JSONResponse
 from pymongo.errors import PyMongoError
 
-from app.modules.system.dependencies import get_dragonfly_service, get_typesense_service
+from app.modules.system.dependencies import (
+    get_dragonfly_service,
+    get_livekit_service,
+    get_typesense_service,
+)
 from app.modules.users.model import User
 from app.platform.backends.dragonfly.service import DragonflyService
+from app.platform.backends.livekit.service import LiveKitService
 from app.platform.backends.typesense.service import TypesenseService
 
 router = APIRouter()
@@ -20,11 +25,13 @@ async def live() -> dict[str, str]:
 @router.get("/ready")
 async def ready(
     dragonfly: DragonflyService = Depends(get_dragonfly_service),
+    livekit: LiveKitService = Depends(get_livekit_service),
     typesense: TypesenseService = Depends(get_typesense_service),
 ):
     checks = {
         "mongodb": True,
         "dragonfly": True,
+        "livekit": True,
         "typesense": True,
     }
 
@@ -41,6 +48,13 @@ async def ready(
         raise
     except (OSError, TimeoutError, RuntimeError):
         checks["dragonfly"] = False
+
+    try:
+        checks["livekit"] = await livekit.ping()
+    except asyncio.CancelledError:
+        raise
+    except (OSError, TimeoutError, RuntimeError):
+        checks["livekit"] = False
 
     try:
         checks["typesense"] = await typesense.ping()
