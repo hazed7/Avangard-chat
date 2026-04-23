@@ -89,10 +89,12 @@ uv sync --group dev
 uv run --group dev pre-commit install
 ```
 
-Погнать вручную:
+Прогнать вручную:
 ```bash
 uv run --group dev pre-commit run --all-files
 ```
+
+Проверка коммита выполняется через pre-commit хуком `check-commit-msg`
 
 ## Что пока не реализовано
 

@@ -1,3 +1,5 @@
+default_install_hook_types: [pre-commit, commit-msg]
+
 repos:
   - repo: local
     hooks:
@@ -17,3 +19,8 @@ repos:
         language: system
         pass_filenames: false
         always_run: true
+      - id: check-commit-msg
+        name: check conventional commit message
+        entry: uv run --group dev python scripts/check_commit_msg.py
+        language: system
+        stages: [commit-msg]
