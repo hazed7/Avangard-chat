@@ -8,6 +8,8 @@ import jwt
 from app.platform.backends.livekit.adapter import LiveKitAdapter
 from app.platform.config.settings import Settings
 
+LIVEKIT_JWT_ALGORITHM = "HS256"
+
 
 class LiveKitService:
     def __init__(self, *, adapter: LiveKitAdapter, settings: Settings):
@@ -134,7 +136,7 @@ class LiveKitService:
         return jwt.encode(
             payload,
             self._settings.livekit.api_secret,
-            algorithm=self._settings.jwt.algorithm,
+            algorithm=LIVEKIT_JWT_ALGORITHM,
         )
 
     @staticmethod

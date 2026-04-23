@@ -61,6 +61,25 @@ def _service(adapter: _FakeAdapter) -> LiveKitService:
     return LiveKitService(adapter=adapter, settings=local_settings)
 
 
+def _service_with_algorithm(
+    adapter: _FakeAdapter,
+    *,
+    jwt_algorithm: str,
+) -> LiveKitService:
+    local_settings = settings.model_copy(
+        update={
+            "livekit_url": "wss://rtc.example.test",
+            "livekit_api_url": "http://livekit.internal:7880",
+            "livekit_api_key": "lk-api-key",
+            "livekit_api_secret": "lk-api-secret",
+            "livekit_room_prefix": "chat-room",
+            "livekit_token_ttl_seconds": 90,
+            "jwt_algorithm": jwt_algorithm,
+        }
+    )
+    return LiveKitService(adapter=adapter, settings=local_settings)
+
+
 def test_livekit_create_join_token_contains_expected_claims() -> None:
     service = _service(_FakeAdapter())
 
@@ -159,3 +178,18 @@ def test_livekit_delete_room_raises_on_non_allowed_errors() -> None:
         assert str(exc) == "LiveKit room deletion failed"
     else:
         raise AssertionError("Expected delete_room failure")
+
+
+def test_livekit_join_token_always_uses_hs256() -> None:
+    service = _service_with_algorithm(_FakeAdapter(), jwt_algorithm="RS256")
+
+    token, _ = service.create_join_token(
+        room_id="room-123",
+        participant_identity="user-123",
+        participant_name="alice",
+        metadata={"call_id": "call-1"},
+    )
+
+    payload = jwt.decode(token, "lk-api-secret", algorithms=["HS256"])
+    assert payload["iss"] == "lk-api-key"
+    assert payload["sub"] == "user-123"
