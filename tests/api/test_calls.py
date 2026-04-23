@@ -394,6 +394,223 @@ def test_call_end_returns_503_when_livekit_room_delete_fails(client: TestClient)
     assert call_doc.status == "ringing"
 
 
+def test_invite_conflicts_when_call_is_already_active(client: TestClient):
+    owner = register_user(client, "conflict-owner")
+    member = register_user(client, "conflict-member")
+    room = create_room(
+        client,
+        owner["access_token"],
+        member_ids=[member["user"]["id"]],
+        name="conflict-room",
+    )
+
+    first_invite = client.post(
+        f"/call/room/{room['id']}/invite",
+        headers=auth_headers(owner["access_token"]),
+    )
+    assert first_invite.status_code == 200
+
+    second_invite = client.post(
+        f"/call/room/{room['id']}/invite",
+        headers=auth_headers(owner["access_token"]),
+    )
+    assert second_invite.status_code == 409
+    assert second_invite.json() == {"detail": "A call is already active"}
+
+
+def test_join_ended_call_returns_conflict(client: TestClient):
+    owner = register_user(client, "join-ended-owner")
+    member = register_user(client, "join-ended-member")
+    room = create_room(
+        client,
+        owner["access_token"],
+        member_ids=[member["user"]["id"]],
+        name="join-ended-room",
+    )
+
+    invite_response = client.post(
+        f"/call/room/{room['id']}/invite",
+        headers=auth_headers(owner["access_token"]),
+    )
+    assert invite_response.status_code == 200
+    call = invite_response.json()
+
+    end_response = client.post(
+        f"/call/{call['id']}/end",
+        headers=auth_headers(owner["access_token"]),
+    )
+    assert end_response.status_code == 200
+
+    join_response = client.post(
+        f"/call/{call['id']}/join",
+        headers=auth_headers(member["access_token"]),
+    )
+    assert join_response.status_code == 409
+    assert join_response.json() == {"detail": "Call has already ended"}
+
+
+def test_call_history_cursor_paginates_and_validates_input(client: TestClient):
+    owner = register_user(client, "history-cursor-owner")
+    member = register_user(client, "history-cursor-member")
+    room = create_room(
+        client,
+        owner["access_token"],
+        member_ids=[member["user"]["id"]],
+        name="history-cursor-room",
+    )
+
+    call_ids: list[str] = []
+    for _ in range(3):
+        invite_response = client.post(
+            f"/call/room/{room['id']}/invite",
+            headers=auth_headers(owner["access_token"]),
+        )
+        assert invite_response.status_code == 200
+        call_id = invite_response.json()["id"]
+        call_ids.append(call_id)
+
+        end_response = client.post(
+            f"/call/{call_id}/end",
+            headers=auth_headers(owner["access_token"]),
+        )
+        assert end_response.status_code == 200
+
+    first_page = client.get(
+        f"/call/room/{room['id']}/history?limit=2",
+        headers=auth_headers(owner["access_token"]),
+    )
+    assert first_page.status_code == 200
+    first_payload = first_page.json()
+    assert len(first_payload["items"]) == 2
+    assert first_payload["next_cursor"] is not None
+
+    second_page = client.get(
+        f"/call/room/{room['id']}/history?limit=2&cursor={first_payload['next_cursor']}",
+        headers=auth_headers(owner["access_token"]),
+    )
+    assert second_page.status_code == 200
+    second_payload = second_page.json()
+    assert len(second_payload["items"]) == 1
+    assert second_payload["next_cursor"] is None
+
+    seen_ids = [
+        item["id"] for item in [*first_payload["items"], *second_payload["items"]]
+    ]
+    assert sorted(seen_ids) == sorted(call_ids)
+
+    invalid_cursor = client.get(
+        f"/call/room/{room['id']}/history?cursor=not-a-valid-cursor",
+        headers=auth_headers(owner["access_token"]),
+    )
+    assert invalid_cursor.status_code == 400
+    assert invalid_cursor.json() == {"detail": "Invalid cursor"}
+
+
+def test_non_manager_cannot_remove_participant_from_call(client: TestClient):
+    owner = register_user(client, "remove-authz-owner")
+    actor = register_user(client, "remove-authz-actor")
+    target = register_user(client, "remove-authz-target")
+    room = create_room(
+        client,
+        owner["access_token"],
+        member_ids=[actor["user"]["id"], target["user"]["id"]],
+        name="remove-authz-room",
+    )
+
+    invite_response = client.post(
+        f"/call/room/{room['id']}/invite",
+        headers=auth_headers(owner["access_token"]),
+    )
+    assert invite_response.status_code == 200
+    call = invite_response.json()
+
+    remove_response = client.post(
+        f"/call/{call['id']}/participants/{target['user']['id']}/remove",
+        headers=auth_headers(actor["access_token"]),
+    )
+    assert remove_response.status_code == 403
+    assert remove_response.json() == {
+        "detail": "You do not have permission to manage this call"
+    }
+
+
+def test_missed_call_ack_works_after_member_removed_from_room(client: TestClient):
+    owner = register_user(client, "ack-removed-owner")
+    member = register_user(client, "ack-removed-member")
+    room = create_room(
+        client,
+        owner["access_token"],
+        member_ids=[member["user"]["id"]],
+        name="ack-removed-room",
+    )
+
+    invite_response = client.post(
+        f"/call/room/{room['id']}/invite",
+        headers=auth_headers(owner["access_token"]),
+    )
+    assert invite_response.status_code == 200
+    call = invite_response.json()
+
+    end_response = client.post(
+        f"/call/{call['id']}/end",
+        headers=auth_headers(owner["access_token"]),
+    )
+    assert end_response.status_code == 200
+
+    remove_member_response = client.delete(
+        f"/room/{room['id']}/members/{member['user']['id']}",
+        headers=auth_headers(owner["access_token"]),
+    )
+    assert remove_member_response.status_code == 200
+
+    ack_response = client.post(
+        f"/call/{call['id']}/missed/ack",
+        headers=auth_headers(member["access_token"]),
+    )
+    assert ack_response.status_code == 200
+
+    missed_response = client.get(
+        "/call/missed",
+        headers=auth_headers(member["access_token"]),
+    )
+    assert missed_response.status_code == 200
+    assert missed_response.json() == {"items": [], "next_cursor": None}
+
+
+def test_missed_call_ack_rejects_non_participant(client: TestClient):
+    owner = register_user(client, "ack-non-participant-owner")
+    member = register_user(client, "ack-non-participant-member")
+    outsider = register_user(client, "ack-non-participant-outsider")
+    room = create_room(
+        client,
+        owner["access_token"],
+        member_ids=[member["user"]["id"]],
+        name="ack-non-participant-room",
+    )
+
+    invite_response = client.post(
+        f"/call/room/{room['id']}/invite",
+        headers=auth_headers(owner["access_token"]),
+    )
+    assert invite_response.status_code == 200
+    call = invite_response.json()
+
+    end_response = client.post(
+        f"/call/{call['id']}/end",
+        headers=auth_headers(owner["access_token"]),
+    )
+    assert end_response.status_code == 200
+
+    ack_response = client.post(
+        f"/call/{call['id']}/missed/ack",
+        headers=auth_headers(outsider["access_token"]),
+    )
+    assert ack_response.status_code == 403
+    assert ack_response.json() == {
+        "detail": "You do not have permission to access this call"
+    }
+
+
 def test_openapi_includes_call_routes(client: TestClient):
     response = client.get("/openapi.json")
     assert response.status_code == 200

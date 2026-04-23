@@ -1,4 +1,6 @@
+import httpx
 from fastapi.testclient import TestClient
+from redis.exceptions import ConnectionError as RedisConnectionError
 
 from app.main import app
 from app.modules.system.dependencies import (
@@ -179,5 +181,69 @@ def test_health_ready_returns_degraded_when_backend_ping_fails(
         "mongodb": True,
         "dragonfly": False,
         "livekit": False,
+        "typesense": False,
+    }
+
+
+def test_health_ready_returns_degraded_when_dragonfly_raises_redis_error(
+    client: TestClient,
+    monkeypatch,
+):
+    async def find_one_ok(*args, **kwargs):  # noqa: ANN002, ANN003
+        return None
+
+    class _RedisFailingBackend:
+        async def ping(self) -> bool:
+            raise RedisConnectionError("dragonfly down")
+
+    app.dependency_overrides[get_dragonfly_service] = lambda: _RedisFailingBackend()
+    app.dependency_overrides[get_livekit_service] = lambda: _FakeBackend(ok=True)
+    app.dependency_overrides[get_typesense_service] = lambda: _FakeBackend(ok=True)
+    monkeypatch.setattr(User, "find_one", find_one_ok)
+    try:
+        response = client.get("/health/ready")
+    finally:
+        app.dependency_overrides.pop(get_dragonfly_service, None)
+        app.dependency_overrides.pop(get_livekit_service, None)
+        app.dependency_overrides.pop(get_typesense_service, None)
+
+    assert response.status_code == 503
+    assert response.json()["status"] == "degraded"
+    assert response.json()["checks"] == {
+        "mongodb": True,
+        "dragonfly": False,
+        "livekit": True,
+        "typesense": True,
+    }
+
+
+def test_health_ready_returns_degraded_when_typesense_raises_http_error(
+    client: TestClient,
+    monkeypatch,
+):
+    async def find_one_ok(*args, **kwargs):  # noqa: ANN002, ANN003
+        return None
+
+    class _TypesenseFailingBackend:
+        async def ping(self) -> bool:
+            raise httpx.ReadTimeout("typesense down")
+
+    app.dependency_overrides[get_dragonfly_service] = lambda: _FakeBackend(ok=True)
+    app.dependency_overrides[get_livekit_service] = lambda: _FakeBackend(ok=True)
+    app.dependency_overrides[get_typesense_service] = lambda: _TypesenseFailingBackend()
+    monkeypatch.setattr(User, "find_one", find_one_ok)
+    try:
+        response = client.get("/health/ready")
+    finally:
+        app.dependency_overrides.pop(get_dragonfly_service, None)
+        app.dependency_overrides.pop(get_livekit_service, None)
+        app.dependency_overrides.pop(get_typesense_service, None)
+
+    assert response.status_code == 503
+    assert response.json()["status"] == "degraded"
+    assert response.json()["checks"] == {
+        "mongodb": True,
+        "dragonfly": True,
+        "livekit": True,
         "typesense": False,
     }
