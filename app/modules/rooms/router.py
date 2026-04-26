@@ -1,4 +1,4 @@
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Query
 
 from app.modules.rooms.schemas import (
     ChatRoomResponse,
@@ -11,6 +11,7 @@ from app.modules.rooms.schemas import (
 from app.modules.rooms.service import RoomService
 from app.modules.system.dependencies import get_room_service, verify_token
 from app.platform.http.errors import error_responses
+from app.platform.http.schemas import OperationOkResponse
 
 router = APIRouter()
 
@@ -98,10 +99,12 @@ async def remove_group_member(
 @router.get(
     "/user/{user_id}",
     response_model=UserRoomsResponse,
-    responses=error_responses(401, 403),
+    responses=error_responses(400, 401, 403),
 )
 async def get_rooms_by_user_id(
     user_id: str,
+    limit: int = Query(50, ge=1, le=100),
+    cursor: str | None = Query(default=None),
     user: dict = Depends(verify_token),
     room_service: RoomService = Depends(get_room_service),
 ):
@@ -110,18 +113,27 @@ async def get_rooms_by_user_id(
             status_code=403,
             detail="You do not have permission to view these rooms",
         )
-    groups, dms = await room_service.list_by_user_partitioned(user_id)
+    groups, dms, next_cursor = await room_service.list_by_user_partitioned(
+        user_id,
+        limit=limit,
+        cursor=cursor,
+    )
     return UserRoomsResponse(
         groups=[serialize_chat_room_response(room) for room in groups],
         dms=[serialize_chat_room_response(room) for room in dms],
+        next_cursor=next_cursor,
     )
 
 
-@router.delete("/{room_id}", responses=error_responses(401, 403, 404))
+@router.delete(
+    "/{room_id}",
+    response_model=OperationOkResponse,
+    responses=error_responses(401, 403),
+)
 async def delete_room(
     room_id: str,
     user: dict = Depends(verify_token),
     room_service: RoomService = Depends(get_room_service),
 ):
     await room_service.delete_room(room_id, user["sub"])
-    return {"ok": True}
+    return OperationOkResponse()

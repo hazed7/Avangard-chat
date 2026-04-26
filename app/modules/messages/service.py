@@ -1,11 +1,19 @@
+import asyncio
 import base64
+import hashlib
 import json
+import os
+from binascii import Error as BinasciiError
 from datetime import UTC, datetime
+from time import time
 
 from aiohttp import ClientResponse
 from bson import ObjectId
 from bson.errors import InvalidId
+from cryptography.exceptions import InvalidTag
+from cryptography.hazmat.primitives.ciphers.aead import AESGCM
 from fastapi import HTTPException, UploadFile
+from pymongo.errors import PyMongoError
 
 from app.modules.messages.model import Message, Attachment
 from app.modules.messages.schemas import (
@@ -18,18 +26,33 @@ from app.modules.messages.schemas import (
     UnreadCountsResponse,
     serialize_message_response,
 )
+from app.modules.messages.unread.service import UnreadCounterService
 from app.modules.rooms.model import ChatRoom
 from app.modules.rooms.service import RoomService
+from app.modules.system.cleanup_jobs.service import CleanupJobService
 from app.modules.users.model import User
 from app.platform.backends.dragonfly.service import DragonflyService
 from app.platform.backends.s3.service import S3Service, s3_settings
 from app.platform.backends.typesense.service import TypesenseService
+from app.platform.config.settings import settings
 from app.platform.observability.logger import get_logger
 from app.platform.persistence.links import linked_document_id, linked_document_ref
 from app.platform.security.message_crypto import MessageCrypto
 
 logger = get_logger("audit")
 DELETED_MESSAGE_TEXT = "[deleted]"
+MAX_MARK_ROOM_READ_EVENT_IDS = 1000
+CURSOR_AAD = b"message-cursor:v1"
+CURSOR_NONCE_BYTES = 12
+MESSAGE_WRITE_ERRORS = (
+    HTTPException,
+    PyMongoError,
+    OSError,
+    TimeoutError,
+    RuntimeError,
+    ValueError,
+    TypeError,
+)
 
 
 class MessageService:
@@ -39,12 +62,16 @@ class MessageService:
         dragonfly: DragonflyService,
         message_crypto: MessageCrypto,
         typesense: TypesenseService,
+        unread_counters: UnreadCounterService,
+        cleanup_jobs: CleanupJobService,
         s3_service: S3Service,
     ):
         self.room_service = room_service
         self.dragonfly = dragonfly
         self.message_crypto = message_crypto
         self.typesense = typesense
+        self.unread_counters = unread_counters
+        self.cleanup_jobs = cleanup_jobs
         self.s3_service = s3_service
 
     async def _get_room_or_404(self, room_id: str) -> ChatRoom:
@@ -128,42 +155,111 @@ class MessageService:
         return linked_document_ref(User.Settings.name, user.id)
 
     @staticmethod
-    def _encode_history_cursor(message: Message) -> str:
+    def _room_member_ids(room: ChatRoom) -> list[str]:
+        member_ids = [linked_document_id(member) for member in room.members]
+        creator_id = linked_document_id(room.created_by)
+        if creator_id not in member_ids:
+            member_ids.append(creator_id)
+        return member_ids
+
+    @staticmethod
+    def _cursor_aesgcm() -> AESGCM:
+        key = hashlib.sha256(settings.message_cursor_secret_key.encode()).digest()
+        return AESGCM(key)
+
+    @classmethod
+    def _encode_cursor_payload(cls, payload: dict) -> str:
+        nonce = os.urandom(CURSOR_NONCE_BYTES)
+        plaintext = json.dumps(payload, separators=(",", ":")).encode()
+        ciphertext = cls._cursor_aesgcm().encrypt(
+            nonce=nonce,
+            data=plaintext,
+            associated_data=CURSOR_AAD,
+        )
+        return base64.urlsafe_b64encode(nonce + ciphertext).decode()
+
+    @classmethod
+    def _decode_cursor_payload(cls, cursor: str) -> dict:
+        try:
+            raw = base64.urlsafe_b64decode(cursor.encode())
+            if len(raw) <= CURSOR_NONCE_BYTES:
+                raise ValueError("cursor payload is too short")
+            nonce = raw[:CURSOR_NONCE_BYTES]
+            ciphertext = raw[CURSOR_NONCE_BYTES:]
+            plaintext = cls._cursor_aesgcm().decrypt(
+                nonce=nonce,
+                data=ciphertext,
+                associated_data=CURSOR_AAD,
+            )
+            payload = json.loads(plaintext.decode())
+            if not isinstance(payload, dict):
+                raise ValueError("cursor payload must be an object")
+            return payload
+        except (
+            BinasciiError,
+            InvalidTag,
+            ValueError,
+            TypeError,
+            json.JSONDecodeError,
+            UnicodeDecodeError,
+        ):
+            raise HTTPException(status_code=400, detail="Invalid cursor")
+
+    @classmethod
+    def _encode_history_cursor(cls, message: Message) -> str:
         payload = {
             "created_at": message.created_at.isoformat(),
             "message_id": str(message.id),
         }
-        raw = json.dumps(payload, separators=(",", ":")).encode()
-        return base64.urlsafe_b64encode(raw).decode()
+        return cls._encode_cursor_payload(payload)
 
-    @staticmethod
-    def _decode_history_cursor(cursor: str) -> tuple[datetime, ObjectId]:
+    @classmethod
+    def _decode_history_cursor(cls, cursor: str) -> tuple[datetime, ObjectId]:
         try:
-            decoded = base64.urlsafe_b64decode(cursor.encode()).decode()
-            payload = json.loads(decoded)
+            payload = cls._decode_cursor_payload(cursor)
             created_at = datetime.fromisoformat(payload["created_at"])
             message_id = ObjectId(payload["message_id"])
             return created_at, message_id
-        except (ValueError, KeyError, TypeError, InvalidId, json.JSONDecodeError):
+        except (ValueError, KeyError, TypeError, InvalidId):
             raise HTTPException(status_code=400, detail="Invalid cursor")
 
-    @staticmethod
-    def _encode_search_cursor(page: int) -> str:
+    @classmethod
+    def _encode_search_cursor(cls, page: int) -> str:
         payload = {"page": page}
-        raw = json.dumps(payload, separators=(",", ":")).encode()
-        return base64.urlsafe_b64encode(raw).decode()
+        return cls._encode_cursor_payload(payload)
 
-    @staticmethod
-    def _decode_search_cursor(cursor: str) -> int:
+    @classmethod
+    def _decode_search_cursor(cls, cursor: str) -> int:
         try:
-            decoded = base64.urlsafe_b64decode(cursor.encode()).decode()
-            payload = json.loads(decoded)
+            payload = cls._decode_cursor_payload(cursor)
             page = int(payload["page"])
-        except (ValueError, KeyError, TypeError, json.JSONDecodeError):
+        except (ValueError, KeyError, TypeError):
             raise HTTPException(status_code=400, detail="Invalid cursor")
         if page < 1:
             raise HTTPException(status_code=400, detail="Invalid cursor")
         return page
+
+    async def _emit_delivery_state(
+        self,
+        *,
+        room_id: str,
+        message_id: str,
+        user_id: str,
+        state: str,
+    ) -> None:
+        await self.dragonfly.publish_room_event(
+            room_id,
+            {
+                "type": "chat.message.delivery.updated",
+                "payload": {
+                    "room_id": room_id,
+                    "message_id": message_id,
+                    "user_id": user_id,
+                    "state": state,
+                    "ts": int(time()),
+                },
+            },
+        )
 
     async def _index_message(self, message: Message, *, text: str) -> None:
         await self.typesense.upsert_message(
@@ -174,6 +270,111 @@ class MessageService:
             created_at=message.created_at,
             is_deleted=message.is_deleted,
         )
+
+    async def _rollback_send_after_insert(
+        self,
+        *,
+        message: Message,
+        cleanup_typesense: bool,
+    ) -> None:
+        message_id = str(message.id)
+        db_deleted = False
+        try:
+            await message.delete()
+            db_deleted = True
+        except MESSAGE_WRITE_ERRORS as rollback_exc:
+            logger.error(
+                "event=message.send.rollback_delete_failed message_id=%s error=%s",
+                message_id,
+                rollback_exc,
+            )
+
+        if not cleanup_typesense or not db_deleted:
+            return
+
+        try:
+            await self.typesense.delete_message(message_id=message_id)
+        except MESSAGE_WRITE_ERRORS as rollback_exc:
+            logger.warning(
+                (
+                    "event=message.send.rollback_typesense_delete_failed "
+                    "message_id=%s error=%s"
+                ),
+                message_id,
+                rollback_exc,
+            )
+            try:
+                await self.cleanup_jobs.enqueue_message_delete_cleanup(
+                    message_id=message_id
+                )
+            except MESSAGE_WRITE_ERRORS as enqueue_exc:
+                logger.error(
+                    (
+                        "event=message.send.rollback_cleanup_enqueue_failed "
+                        "message_id=%s error=%s"
+                    ),
+                    message_id,
+                    enqueue_exc,
+                )
+
+    @staticmethod
+    def _capture_edit_state(message: Message) -> dict[str, object]:
+        return {
+            "text_ciphertext": message.text_ciphertext,
+            "text_nonce": message.text_nonce,
+            "text_key_id": message.text_key_id,
+            "text_aad": message.text_aad,
+            "is_edited": message.is_edited,
+            "edited_at": message.edited_at,
+        }
+
+    @staticmethod
+    def _restore_edit_state(
+        message: Message, previous_state: dict[str, object]
+    ) -> None:
+        message.text_ciphertext = str(previous_state["text_ciphertext"])
+        message.text_nonce = str(previous_state["text_nonce"])
+        message.text_key_id = str(previous_state["text_key_id"])
+        message.text_aad = str(previous_state["text_aad"])
+        message.is_edited = bool(previous_state["is_edited"])
+        message.edited_at = previous_state["edited_at"]  # type: ignore[assignment]
+
+    async def _rollback_edit_after_index_failure(
+        self,
+        *,
+        message: Message,
+        previous_state: dict[str, object],
+        previous_text: str,
+        error: Exception,
+    ) -> None:
+        self._restore_edit_state(message, previous_state)
+        try:
+            await message.save()
+        except MESSAGE_WRITE_ERRORS as rollback_exc:
+            logger.error(
+                (
+                    "event=message.edit.rollback_save_failed "
+                    "message_id=%s error=%s rollback_error=%s"
+                ),
+                str(message.id),
+                error,
+                rollback_exc,
+            )
+            raise rollback_exc
+
+        try:
+            await self._index_message(message, text=previous_text)
+        except MESSAGE_WRITE_ERRORS as rollback_exc:
+            logger.error(
+                (
+                    "event=message.edit.rollback_reindex_failed "
+                    "message_id=%s error=%s rollback_error=%s"
+                ),
+                str(message.id),
+                error,
+                rollback_exc,
+            )
+            raise rollback_exc
 
     async def send(self, data: MessageCreate, sender_id: str) -> MessageResponse:
         room = await self.room_service.get_for_user(data.room_id, sender_id)
@@ -196,10 +397,25 @@ class MessageService:
             created_at=created_at,
         )
         await message.insert()
+        should_cleanup_typesense = False
         try:
+            should_cleanup_typesense = True
             await self._index_message(message, text=data.text)
-        except HTTPException:
-            await message.delete()
+            await self.unread_counters.increment_for_new_message(
+                room=room,
+                sender_id=sender_id,
+            )
+        except asyncio.CancelledError:
+            await self._rollback_send_after_insert(
+                message=message,
+                cleanup_typesense=should_cleanup_typesense,
+            )
+            raise
+        except MESSAGE_WRITE_ERRORS:
+            await self._rollback_send_after_insert(
+                message=message,
+                cleanup_typesense=should_cleanup_typesense,
+            )
             raise
         logger.info(
             "event=message.send user_id=%s room_id=%s message_id=%s",
@@ -255,12 +471,8 @@ class MessageService:
                 detail="Deleted messages cannot be edited",
             )
 
-        previous_ciphertext = message.text_ciphertext
-        previous_nonce = message.text_nonce
-        previous_key_id = message.text_key_id
-        previous_aad = message.text_aad
-        previous_is_edited = message.is_edited
-        previous_edited_at = message.edited_at
+        previous_state = self._capture_edit_state(message)
+        previous_text = self._decrypt_text(message)
 
         encrypted = self._encrypt_text(
             text=data.text,
@@ -277,14 +489,21 @@ class MessageService:
         await message.save()
         try:
             await self._index_message(message, text=data.text)
-        except HTTPException:
-            message.text_ciphertext = previous_ciphertext
-            message.text_nonce = previous_nonce
-            message.text_key_id = previous_key_id
-            message.text_aad = previous_aad
-            message.is_edited = previous_is_edited
-            message.edited_at = previous_edited_at
-            await message.save()
+        except asyncio.CancelledError as exc:
+            await self._rollback_edit_after_index_failure(
+                message=message,
+                previous_state=previous_state,
+                previous_text=previous_text,
+                error=exc,
+            )
+            raise
+        except MESSAGE_WRITE_ERRORS as exc:
+            await self._rollback_edit_after_index_failure(
+                message=message,
+                previous_state=previous_state,
+                previous_text=previous_text,
+                error=exc,
+            )
             raise
         logger.info(
             "event=message.edit user_id=%s message_id=%s",
@@ -296,24 +515,35 @@ class MessageService:
     async def delete(self, message_id: str, user_id: str) -> None:
         message = await self._get_message_or_404(message_id)
         await self._ensure_message_owner(message, user_id)
-        previous_is_deleted = message.is_deleted
-        message.is_deleted = True
-        await message.save()
-        try:
-            await self.typesense.delete_message(message_id=message_id)
-        except HTTPException:
-            message.is_deleted = previous_is_deleted
+        was_deleted = message.is_deleted
+        if not was_deleted:
+            room_id = linked_document_id(message.room)
+            room = await self.room_service.get(room_id)
+            if room:
+                sender_id = linked_document_id(message.sender)
+                read_by_ids = {linked_document_id(user) for user in message.read_by}
+                for member_id in self._room_member_ids(room):
+                    if member_id == sender_id or member_id in read_by_ids:
+                        continue
+                    await self.unread_counters.decrement(
+                        room_id=room_id,
+                        user_id=member_id,
+                        by=1,
+                    )
+            message.is_deleted = True
             await message.save()
-            raise
+        await self.typesense.delete_message(message_id=message_id)
         await self.dragonfly.invalidate_message_owner_cache(message_id)
+        await self.cleanup_jobs.enqueue_message_delete_cleanup(message_id=message_id)
         for attachment in message.attachments:
             await self.s3_service.delete_file(
                 s3_settings.bucket_attachments, attachment.object_path
             )
         logger.info(
-            "event=message.delete user_id=%s message_id=%s",
+            "event=message.delete user_id=%s message_id=%s already_deleted=%s",
             user_id,
             message_id,
+            was_deleted,
         )
 
     async def get_by_id(self, message_id: str) -> MessageResponse:
@@ -325,10 +555,28 @@ class MessageService:
         room_id = linked_document_id(message.room)
         await self.room_service.get_for_user(room_id, user_id)
         user = await self._get_user_or_404(user_id)
-        await Message.get_motor_collection().update_one(
-            {"_id": message.id},
-            {"$addToSet": {"read_by": self._user_ref(user)}},
+        user_ref = self._user_ref(user)
+        result = await Message.get_motor_collection().update_one(
+            {
+                "_id": message.id,
+                "is_deleted": False,
+                "sender": {"$ne": user_ref},
+                "read_by": {"$ne": user_ref},
+            },
+            {"$addToSet": {"read_by": user_ref}},
         )
+        if result.modified_count:
+            await self.unread_counters.decrement(
+                room_id=room_id,
+                user_id=user_id,
+                by=1,
+            )
+            await self._emit_delivery_state(
+                room_id=room_id,
+                message_id=message_id,
+                user_id=user_id,
+                state="read",
+            )
         updated_message = await self._get_message_or_404(message_id)
         return self._serialize_message(updated_message)
 
@@ -336,15 +584,56 @@ class MessageService:
         room = await self.room_service.get_for_user(room_id, user_id)
         user = await self._get_user_or_404(user_id)
         user_ref = self._user_ref(user)
+        room_ref = self._room_ref(room)
+        unread_query = {
+            "room": room_ref,
+            "is_deleted": False,
+            "sender": {"$ne": user_ref},
+            "read_by": {"$ne": user_ref},
+        }
+        unread_message_refs = (
+            await Message.get_motor_collection()
+            .find(
+                unread_query,
+                projection={"_id": 1},
+                sort=[("_id", 1)],
+                limit=MAX_MARK_ROOM_READ_EVENT_IDS,
+            )
+            .to_list(length=MAX_MARK_ROOM_READ_EVENT_IDS)
+        )
+        unread_ids = [
+            str(message_ref["_id"])
+            for message_ref in unread_message_refs
+            if message_ref.get("_id") is not None
+        ]
         result = await Message.get_motor_collection().update_many(
-            {
-                "room": self._room_ref(room),
-                "is_deleted": False,
-                "sender": {"$ne": user_ref},
-                "read_by": {"$ne": user_ref},
-            },
+            unread_query,
             {"$addToSet": {"read_by": user_ref}},
         )
+        if result.modified_count:
+            await self.unread_counters.decrement(
+                room_id=room_id,
+                user_id=user_id,
+                by=result.modified_count,
+            )
+            if result.modified_count > len(unread_ids):
+                logger.info(
+                    (
+                        "event=message.mark_room_read.events_truncated "
+                        "room_id=%s user_id=%s modified=%s emitted=%s"
+                    ),
+                    room_id,
+                    user_id,
+                    result.modified_count,
+                    len(unread_ids),
+                )
+            for message_id in unread_ids:
+                await self._emit_delivery_state(
+                    room_id=room_id,
+                    message_id=message_id,
+                    user_id=user_id,
+                    state="read",
+                )
         return MarkRoomReadResponse(marked_count=result.modified_count)
 
     async def get_unread_counts(
@@ -353,38 +642,30 @@ class MessageService:
         user_id: str,
         room_id: str | None,
     ) -> UnreadCountsResponse:
-        user = await self._get_user_or_404(user_id)
-        user_ref = linked_document_ref(User.Settings.name, user.id)
+        await self._get_user_or_404(user_id)
 
         rooms: list[ChatRoom]
         if room_id:
             rooms = [await self.room_service.get_for_user(room_id, user_id)]
         else:
-            rooms = await self.room_service.list_all_by_user(user_id)
+            rooms = await self.room_service.list_all_by_user_unbounded(user_id)
 
         if not rooms:
             return UnreadCountsResponse(total=0, by_room=[])
 
-        room_refs = [self._room_ref(room) for room in rooms]
-        room_id_map = {str(room.id): 0 for room in rooms}
-
-        unread_messages = await Message.find(
-            {
-                "room": {"$in": room_refs},
-                "is_deleted": False,
-                "sender": {"$ne": user_ref},
-                "read_by": {"$ne": user_ref},
-            }
-        ).to_list()
-
-        for message in unread_messages:
-            room_id_map[linked_document_id(message.room)] += 1
+        room_ids = [str(room.id) for room in rooms]
+        counts_by_room = await self.unread_counters.get_counts_for_user(
+            user_id=user_id,
+            room_ids=room_ids,
+        )
 
         by_room = [
             RoomUnreadCount(room_id=current_room_id, unread_count=unread_count)
-            for current_room_id, unread_count in room_id_map.items()
+            for current_room_id, unread_count in counts_by_room.items()
             if unread_count > 0 or room_id is not None
         ]
+        if room_id is not None and room_id not in counts_by_room:
+            by_room = [RoomUnreadCount(room_id=room_id, unread_count=0)]
         return UnreadCountsResponse(
             total=sum(item.unread_count for item in by_room),
             by_room=by_room,
@@ -403,7 +684,7 @@ class MessageService:
             room = await self.room_service.get_for_user(room_id, user_id)
             room_ids = [str(room.id)]
         else:
-            rooms = await self.room_service.list_all_by_user(user_id)
+            rooms = await self.room_service.list_all_by_user_unbounded(user_id)
             room_ids = [str(room.id) for room in rooms]
 
         page = self._decode_search_cursor(cursor) if cursor else 1
@@ -416,11 +697,22 @@ class MessageService:
         if not message_ids:
             return MessageCursorPageResponse(items=[], next_cursor=None)
 
-        ordered_messages: list[Message] = []
+        object_ids: list[ObjectId] = []
         for message_id in message_ids:
-            message = await Message.get(message_id)
-            if message:
-                ordered_messages.append(message)
+            try:
+                object_ids.append(ObjectId(message_id))
+            except InvalidId:
+                continue
+        if not object_ids:
+            return MessageCursorPageResponse(items=[], next_cursor=None)
+
+        found_messages = await Message.find({"_id": {"$in": object_ids}}).to_list()
+        found_by_id = {str(message.id): message for message in found_messages}
+        ordered_messages = [
+            found_by_id[message_id]
+            for message_id in message_ids
+            if message_id in found_by_id and not found_by_id[message_id].is_deleted
+        ]
         logger.info(
             (
                 "event=message.search user_id=%s room_scope=%s "

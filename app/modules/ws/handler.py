@@ -15,6 +15,8 @@ from app.modules.ws.protocol import (
     WsErrorPayload,
     WsMessageCreatedEvent,
     WsMessageCreateEvent,
+    WsMessageDeliveryUpdatedEvent,
+    WsMessageDeliveryUpdatedPayload,
     WsPingEvent,
     WsPingPayload,
     WsPongEvent,
@@ -121,6 +123,26 @@ def _typing_updated_event(
     )
 
 
+def _message_delivery_event(
+    *,
+    room_id: str,
+    message_id: str,
+    user_id: str,
+    state: str,
+) -> dict:
+    return jsonable_encoder(
+        WsMessageDeliveryUpdatedEvent(
+            payload=WsMessageDeliveryUpdatedPayload(
+                room_id=room_id,
+                message_id=message_id,
+                user_id=user_id,
+                state=state,
+                ts=int(time()),
+            )
+        )
+    )
+
+
 async def handle_room_chat(
     websocket: WebSocket,
     room_id: str,
@@ -156,6 +178,7 @@ async def handle_room_chat(
         websocket,
         room_id,
         payload["sub"],
+        payload,
         subprotocol=CHAT_SUBPROTOCOL,
     )
     user_id = payload["sub"]
@@ -176,6 +199,10 @@ async def handle_room_chat(
                 continue
 
             last_activity_at = monotonic()
+
+            if not await manager.ensure_connection_authorized(websocket):
+                await websocket.close(code=1008)
+                break
 
             try:
                 event_type = data.get("type")
@@ -350,6 +377,29 @@ async def handle_room_chat(
                     room_id,
                     jsonable_encoder(WsMessageCreatedEvent(payload=message_payload)),
                 )
+                message_id = str(message.id)
+                await manager.publish(
+                    room_id,
+                    _message_delivery_event(
+                        room_id=room_id,
+                        message_id=message_id,
+                        user_id=user_id,
+                        state="sent",
+                    ),
+                )
+                online_user_ids = await dragonfly.list_room_online_users(room_id)
+                for online_user_id in online_user_ids:
+                    if online_user_id == user_id:
+                        continue
+                    await manager.publish(
+                        room_id,
+                        _message_delivery_event(
+                            room_id=room_id,
+                            message_id=message_id,
+                            user_id=online_user_id,
+                            state="delivered",
+                        ),
+                    )
             except HTTPException as exc:
                 error_code = "message_create_failed"
                 if exc.status_code == 404:

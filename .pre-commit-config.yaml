@@ -1,3 +1,5 @@
+default_install_hook_types: [pre-commit, commit-msg]
+
 repos:
   - repo: local
     hooks:
@@ -6,14 +8,22 @@ repos:
         entry: uv run --group dev ruff check --fix
         language: system
         types_or: [python, pyi]
+        stages: [pre-commit]
       - id: ruff-format
         name: ruff format
         entry: uv run --group dev ruff format
         language: system
         types_or: [python, pyi]
+        stages: [pre-commit]
       - id: check-architecture-imports
         name: check architecture import boundaries
         entry: uv run --group dev python scripts/check_architecture_imports.py
         language: system
         pass_filenames: false
         always_run: true
+        stages: [pre-commit]
+      - id: check-commit-msg
+        name: check conventional commit message
+        entry: uv run --group dev python scripts/check_commit_msg.py
+        language: system
+        stages: [commit-msg]

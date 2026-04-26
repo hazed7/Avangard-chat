@@ -24,6 +24,7 @@ class GroupRoomMemberUpdate(BaseModel):
 
 
 class ChatRoomResponse(BaseModel):
+    model_config = ConfigDict(extra="forbid")
     id: str
     name: Optional[str] = None
     is_group: bool
@@ -33,8 +34,10 @@ class ChatRoomResponse(BaseModel):
 
 
 class UserRoomsResponse(BaseModel):
+    model_config = ConfigDict(extra="forbid")
     groups: List[ChatRoomResponse]
     dms: List[ChatRoomResponse]
+    next_cursor: str | None = None
 
 
 def serialize_chat_room_response(room: ChatRoom) -> ChatRoomResponse:

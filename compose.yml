@@ -13,6 +13,7 @@ services:
       - TYPESENSE_API_KEY=dev-typesense-key
       - JWT_SECRET_KEY=change-me-access-secret
       - REFRESH_TOKEN_SECRET_KEY=change-me-refresh-secret
+      - MESSAGE_CURSOR_SECRET_KEY=change-me-message-cursor-secret
       - MESSAGE_ENCRYPTION_ACTIVE_KEY_ID=v1
       - 'MESSAGE_ENCRYPTION_KEYS={"v1":"MDEyMzQ1Njc4OWFiY2RlZjAxMjM0NTY3ODlhYmNkZWY="}'
       - S3_URL=minio:9000

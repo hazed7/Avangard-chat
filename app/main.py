@@ -5,21 +5,36 @@ from fastapi.openapi.utils import get_openapi
 
 from app.modules.auth import router as auth
 from app.modules.messages import router as messages
+from app.modules.messages.unread.worker import UnreadCounterReconciliationWorker
 from app.modules.rooms import router as rooms
 from app.modules.system import health_router as health
+from app.modules.system.cleanup_jobs.worker import CleanupJobWorker
 from app.modules.system.database import init_db
+from app.modules.system.dependencies import (
+    get_cleanup_job_service,
+    get_unread_counter_service,
+)
 from app.modules.users import router as users
 from app.modules.ws import router as ws
 from app.modules.ws.manager import manager
 from app.platform.backends.dragonfly.container import get_dragonfly_service_singleton
 from app.platform.backends.s3.container import get_s3_service_singleton
 from app.platform.backends.typesense.container import get_typesense_service_singleton
+from app.platform.config.settings import settings
 
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     dragonfly = get_dragonfly_service_singleton()
     typesense = get_typesense_service_singleton()
+    cleanup_job_worker = CleanupJobWorker(
+        service=get_cleanup_job_service(),
+        interval_seconds=settings.cleanup_job_worker_interval_seconds,
+    )
+    unread_reconcile_worker = UnreadCounterReconciliationWorker(
+        service=get_unread_counter_service(),
+        interval_seconds=settings.unread_reconcile_interval_seconds,
+    )
     s3_service = get_s3_service_singleton()
     await dragonfly.startup()
     await typesense.startup()
@@ -27,8 +42,12 @@ async def lifespan(app: FastAPI):
         await init_db()
         await s3_service.init_s3()
         await manager.startup()
+        await cleanup_job_worker.startup()
+        await unread_reconcile_worker.startup()
         yield
     finally:
+        await unread_reconcile_worker.shutdown()
+        await cleanup_job_worker.shutdown()
         await manager.shutdown()
         await typesense.shutdown()
         await dragonfly.shutdown()

@@ -1,5 +1,6 @@
 from fastapi.testclient import TestClient
 
+from app.modules.messages.model import Message
 from tests.helpers.auth import auth_headers, register_user
 from tests.helpers.chat import create_message, create_room
 
@@ -230,9 +231,58 @@ def test_users_can_only_list_their_own_rooms(client: TestClient):
     own_rooms = own_rooms_response.json()
     assert len(own_rooms["groups"]) == 1
     assert own_rooms["dms"] == []
+    assert own_rooms["next_cursor"] is None
 
     other_rooms_response = client.get(
         f"/room/user/{alice['user']['id']}",
         headers=auth_headers(bob["access_token"]),
     )
     assert other_rooms_response.status_code == 403
+
+
+def test_room_delete_restores_room_when_message_delete_fails(
+    client: TestClient,
+    monkeypatch,
+):
+    owner = register_user(client, "room-delete-comp-owner")
+    room = create_room(
+        client,
+        owner["access_token"],
+        member_ids=[],
+        name="room-delete-comp-room",
+    )
+    create_message(
+        client,
+        owner["access_token"],
+        room["id"],
+        text="will trigger compensation",
+    )
+
+    class FailingMessageCollection:
+        def __init__(self, wrapped_collection):
+            self._wrapped_collection = wrapped_collection
+
+        def __getattr__(self, name: str):
+            return getattr(self._wrapped_collection, name)
+
+        async def delete_many(self, query):  # noqa: ANN001
+            raise OSError("simulated delete_many failure")
+
+    real_collection = Message.get_motor_collection()
+    monkeypatch.setattr(
+        Message,
+        "get_motor_collection",
+        classmethod(lambda cls: FailingMessageCollection(real_collection)),
+    )
+
+    delete_response = client.delete(
+        f"/room/{room['id']}",
+        headers=auth_headers(owner["access_token"]),
+    )
+    assert delete_response.status_code == 503
+
+    room_still_exists = client.get(
+        f"/room/{room['id']}",
+        headers=auth_headers(owner["access_token"]),
+    )
+    assert room_still_exists.status_code == 200

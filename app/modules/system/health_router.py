@@ -1,5 +1,8 @@
+import asyncio
+
 from fastapi import APIRouter, Depends
 from fastapi.responses import JSONResponse
+from pymongo.errors import PyMongoError
 
 from app.modules.system.dependencies import get_dragonfly_service, get_typesense_service
 from app.modules.users.model import User
@@ -27,17 +30,23 @@ async def ready(
 
     try:
         await User.find_one(User.id == "__healthcheck__")
-    except Exception:  # noqa: BLE001
+    except asyncio.CancelledError:
+        raise
+    except (PyMongoError, RuntimeError):
         checks["mongodb"] = False
 
     try:
         checks["dragonfly"] = await dragonfly.ping()
-    except Exception:  # noqa: BLE001
+    except asyncio.CancelledError:
+        raise
+    except (OSError, TimeoutError, RuntimeError):
         checks["dragonfly"] = False
 
     try:
         checks["typesense"] = await typesense.ping()
-    except Exception:  # noqa: BLE001
+    except asyncio.CancelledError:
+        raise
+    except (OSError, TimeoutError, RuntimeError):
         checks["typesense"] = False
 
     status = "ok" if all(checks.values()) else "degraded"

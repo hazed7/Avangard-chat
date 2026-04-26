@@ -1,6 +1,14 @@
 import asyncio
+import base64
+import json
+
+import pytest
 
 from app.modules.messages.model import Message
+from app.modules.messages.unread.service import UnreadCounterService
+from app.modules.system import dependencies
+from app.modules.system.cleanup_jobs.model import CleanupJob
+from app.platform.config.settings import settings
 from tests.helpers.auth import auth_headers, register_user
 from tests.helpers.chat import create_message, create_room
 
@@ -120,6 +128,58 @@ def test_message_delete_removes_it_from_search(client):
     assert after_delete.json() == {"items": [], "next_cursor": None}
 
 
+def test_message_search_hides_deleted_messages_even_with_stale_search_hits(
+    client,
+    monkeypatch,
+):
+    owner = register_user(client, "search-stale-hit-owner")
+    room = create_room(
+        client,
+        owner["access_token"],
+        member_ids=[],
+        name="search-stale-hit-room",
+    )
+    message = create_message(
+        client,
+        owner["access_token"],
+        room["id"],
+        text="stale-index-hit",
+    )
+
+    delete_response = client.delete(
+        f"/message/{message['id']}",
+        headers=auth_headers(owner["access_token"]),
+    )
+    assert delete_response.status_code == 200
+
+    class StaleSearchService:
+        async def search_message_ids_by_page(
+            self,
+            *,
+            query: str,
+            room_ids: list[str],
+            limit: int,
+            page: int,
+        ) -> tuple[list[str], bool]:
+            assert query == "stale-index-hit"
+            assert room["id"] in room_ids
+            assert limit == 20
+            assert page == 1
+            return [message["id"]], False
+
+    monkeypatch.setattr(
+        "app.modules.system.dependencies.get_typesense_service_singleton",
+        lambda: StaleSearchService(),
+    )
+
+    response = client.get(
+        "/message/search?q=stale-index-hit",
+        headers=auth_headers(owner["access_token"]),
+    )
+    assert response.status_code == 200
+    assert response.json() == {"items": [], "next_cursor": None}
+
+
 def test_message_search_supports_pagination(client):
     owner = register_user(client, "search-page-owner")
     room = create_room(
@@ -165,6 +225,37 @@ def test_message_search_supports_pagination(client):
     }
 
 
+def test_message_search_does_not_use_per_id_message_get(
+    client,
+    monkeypatch,
+):
+    owner = register_user(client, "search-bulk-owner")
+    room = create_room(
+        client,
+        owner["access_token"],
+        member_ids=[],
+        name="search-bulk-room",
+    )
+    create_message(
+        client,
+        owner["access_token"],
+        room["id"],
+        text="bulk-search-keyword",
+    )
+
+    async def fail_message_get(*args, **kwargs):  # noqa: ANN002, ANN003
+        raise AssertionError("Message.get must not be called during search")
+
+    monkeypatch.setattr(Message, "get", fail_message_get)
+
+    response = client.get(
+        "/message/search?q=bulk-search-keyword",
+        headers=auth_headers(owner["access_token"]),
+    )
+    assert response.status_code == 200
+    assert len(response.json()["items"]) == 1
+
+
 def test_message_search_room_scope_filters_results(client):
     owner = register_user(client, "search-scope-owner")
     room_a = create_room(
@@ -199,6 +290,27 @@ def test_message_search_room_scope_filters_results(client):
     )
     assert scoped.status_code == 200
     assert [item["id"] for item in scoped.json()["items"]] == [message_a["id"]]
+
+
+def test_message_search_rate_limit_returns_429(
+    client,
+    monkeypatch,
+):
+    owner = register_user(client, "search-rate-limit-owner")
+    monkeypatch.setattr(settings, "message_search_rate_limit_max_attempts", 1)
+    monkeypatch.setattr(settings, "message_search_rate_limit_window_seconds", 60)
+
+    first = client.get(
+        "/message/search?q=rate-limit-check",
+        headers=auth_headers(owner["access_token"]),
+    )
+    assert first.status_code == 200
+
+    second = client.get(
+        "/message/search?q=rate-limit-check",
+        headers=auth_headers(owner["access_token"]),
+    )
+    assert second.status_code == 429
 
 
 def test_deleted_message_is_redacted_in_history(client):
@@ -260,6 +372,53 @@ def test_message_cursor_rejects_invalid_values(client):
     assert invalid_search_cursor.status_code == 400
 
 
+def test_message_cursors_are_opaque_and_not_plain_json(client):
+    owner = register_user(client, "opaque-cursor-owner")
+    room = create_room(
+        client,
+        owner["access_token"],
+        member_ids=[],
+        name="opaque-cursor-room",
+    )
+    first = create_message(
+        client,
+        owner["access_token"],
+        room["id"],
+        text="opaque cursor one",
+    )
+    create_message(
+        client,
+        owner["access_token"],
+        room["id"],
+        text="opaque cursor two",
+    )
+
+    history_page = client.get(
+        f"/message/room/{room['id']}?limit=1",
+        headers=auth_headers(owner["access_token"]),
+    )
+    assert history_page.status_code == 200
+    history_cursor = history_page.json()["next_cursor"]
+    assert history_cursor is not None
+
+    history_decoded = base64.urlsafe_b64decode(history_cursor.encode())
+    with pytest.raises((UnicodeDecodeError, json.JSONDecodeError)):
+        json.loads(history_decoded.decode())
+    assert first["id"].encode() not in history_decoded
+
+    search_page = client.get(
+        "/message/search?q=opaque&limit=1",
+        headers=auth_headers(owner["access_token"]),
+    )
+    assert search_page.status_code == 200
+    search_cursor = search_page.json()["next_cursor"]
+    assert search_cursor is not None
+
+    search_decoded = base64.urlsafe_b64decode(search_cursor.encode())
+    with pytest.raises((UnicodeDecodeError, json.JSONDecodeError)):
+        json.loads(search_decoded.decode())
+
+
 def test_room_delete_cascades_messages_and_search_docs(client):
     owner = register_user(client, "cascade-owner")
     room = create_room(
@@ -289,3 +448,184 @@ def test_room_delete_cascades_messages_and_search_docs(client):
         headers=auth_headers(owner["access_token"]),
     )
     assert room_search.status_code == 404
+
+
+def test_delete_operations_enqueue_cleanup_jobs(client):
+    owner = register_user(client, "cleanup-job-owner")
+    room = create_room(
+        client,
+        owner["access_token"],
+        member_ids=[],
+        name="cleanup-job-room",
+    )
+    message = create_message(
+        client,
+        owner["access_token"],
+        room["id"],
+        text="cleanup enqueue",
+    )
+
+    delete_message_response = client.delete(
+        f"/message/{message['id']}",
+        headers=auth_headers(owner["access_token"]),
+    )
+    assert delete_message_response.status_code == 200
+
+    message_job = asyncio.run(
+        CleanupJob.get_motor_collection().find_one(
+            {
+                "job_type": "message_delete_cleanup",
+                "payload.message_id": message["id"],
+            }
+        )
+    )
+    assert message_job is not None
+
+    delete_room_response = client.delete(
+        f"/room/{room['id']}",
+        headers=auth_headers(owner["access_token"]),
+    )
+    assert delete_room_response.status_code == 200
+
+    room_job = asyncio.run(
+        CleanupJob.get_motor_collection().find_one(
+            {"job_type": "room_delete_cleanup", "payload.room_id": room["id"]}
+        )
+    )
+    assert room_job is not None
+
+
+def test_send_rolls_back_message_and_search_doc_when_unread_increment_fails(
+    client,
+    monkeypatch,
+):
+    owner = register_user(client, "send-rollback-owner")
+    room = create_room(
+        client,
+        owner["access_token"],
+        member_ids=[],
+        name="send-rollback-room",
+    )
+    fake_typesense = dependencies.get_typesense_service_singleton()
+
+    async def fail_increment_for_new_message(self, *, room, sender_id):  # noqa: ANN001
+        raise RuntimeError("unread increment failed")
+
+    monkeypatch.setattr(
+        UnreadCounterService,
+        "increment_for_new_message",
+        fail_increment_for_new_message,
+    )
+
+    with pytest.raises(RuntimeError, match="unread increment failed"):
+        client.post(
+            "/message",
+            headers=auth_headers(owner["access_token"]),
+            json={"room_id": room["id"], "text": "rollback-search-cleanup"},
+        )
+    assert asyncio.run(Message.find({}).to_list()) == []
+    assert fake_typesense._docs == {}
+
+
+def test_edit_rolls_back_db_and_search_doc_on_index_runtime_failure(
+    client,
+    monkeypatch,
+):
+    owner = register_user(client, "edit-rollback-owner")
+    room = create_room(
+        client,
+        owner["access_token"],
+        member_ids=[],
+        name="edit-rollback-room",
+    )
+    message = create_message(
+        client,
+        owner["access_token"],
+        room["id"],
+        text="before-edit-text",
+    )
+    fake_typesense = dependencies.get_typesense_service_singleton()
+    original_upsert = fake_typesense.upsert_message
+    upsert_calls = {"count": 0}
+
+    async def fail_first_upsert(  # noqa: ANN001
+        *,
+        message_id,
+        room_id,
+        sender_id,
+        text,
+        created_at,
+        is_deleted,
+    ):
+        upsert_calls["count"] += 1
+        if upsert_calls["count"] == 1:
+            raise RuntimeError("typesense write failed")
+        await original_upsert(
+            message_id=message_id,
+            room_id=room_id,
+            sender_id=sender_id,
+            text=text,
+            created_at=created_at,
+            is_deleted=is_deleted,
+        )
+
+    monkeypatch.setattr(fake_typesense, "upsert_message", fail_first_upsert)
+
+    with pytest.raises(RuntimeError, match="typesense write failed"):
+        client.patch(
+            f"/message/{message['id']}",
+            headers=auth_headers(owner["access_token"]),
+            json={"text": "after-edit-text"},
+        )
+
+    history_response = client.get(
+        f"/message/room/{room['id']}",
+        headers=auth_headers(owner["access_token"]),
+    )
+    assert history_response.status_code == 200
+    history_item = history_response.json()["items"][0]
+    assert history_item["text"] == "before-edit-text"
+    assert history_item["is_edited"] is False
+    assert fake_typesense._docs[message["id"]]["text"] == "before-edit-text"
+
+
+def test_edit_failure_is_not_silent_when_rollback_save_fails(client, monkeypatch):
+    owner = register_user(client, "edit-rollback-save-owner")
+    room = create_room(
+        client,
+        owner["access_token"],
+        member_ids=[],
+        name="edit-rollback-save-room",
+    )
+    message = create_message(
+        client,
+        owner["access_token"],
+        room["id"],
+        text="rollback-save-before",
+    )
+    fake_typesense = dependencies.get_typesense_service_singleton()
+
+    async def fail_upsert(
+        *, message_id, room_id, sender_id, text, created_at, is_deleted
+    ):  # noqa: ANN001,E501
+        raise RuntimeError("typesense write failed")
+
+    monkeypatch.setattr(fake_typesense, "upsert_message", fail_upsert)
+
+    original_save = Message.save
+    save_calls = {"count": 0}
+
+    async def fail_second_save(self, *args, **kwargs):  # noqa: ANN002, ANN003
+        save_calls["count"] += 1
+        if save_calls["count"] == 2:
+            raise RuntimeError("rollback save failed")
+        return await original_save(self, *args, **kwargs)
+
+    monkeypatch.setattr(Message, "save", fail_second_save)
+
+    with pytest.raises(RuntimeError, match="rollback save failed"):
+        client.patch(
+            f"/message/{message['id']}",
+            headers=auth_headers(owner["access_token"]),
+            json={"text": "rollback-save-after"},
+        )

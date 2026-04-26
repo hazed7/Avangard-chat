@@ -2,6 +2,7 @@ from datetime import UTC, datetime
 from typing import Any
 
 from fastapi import HTTPException
+from redis.exceptions import RedisError
 
 from app.platform.backends.dragonfly import keys
 from app.platform.backends.dragonfly.adapter import DragonflyAdapter
@@ -10,6 +11,13 @@ from app.platform.observability.logger import get_logger
 
 logger = get_logger("dragonfly")
 WS_IDEMPOTENCY_BYPASS_LOCK_TOKEN = "__dragonfly_open_bypass__"
+DRAGONFLY_BACKEND_ERRORS = (
+    RedisError,
+    OSError,
+    TimeoutError,
+    ValueError,
+    RuntimeError,
+)
 
 
 class DragonflyService:
@@ -38,7 +46,7 @@ class DragonflyService:
     ) -> None:
         try:
             current = await self._adapter.incr_with_window(key, window_seconds)
-        except Exception as exc:  # noqa: BLE001
+        except DRAGONFLY_BACKEND_ERRORS as exc:
             await self._handle_backend_failure(
                 policy=failure_policy,
                 feature="rate_limit",
@@ -142,11 +150,20 @@ class DragonflyService:
             failure_policy=self._settings.dragonfly.fail_policy.rate_limit,
         )
 
+    async def enforce_message_search_rate_limit(self, *, user_id: str) -> None:
+        await self.enforce_rate_limit(
+            key=keys.rl_message_search(self._prefix, user_id),
+            limit=self._settings.message_search_rate_limit_max_attempts,
+            window_seconds=self._settings.message_search_rate_limit_window_seconds,
+            detail="Too many search requests. Slow down.",
+            failure_policy=self._settings.dragonfly.fail_policy.rate_limit,
+        )
+
     async def publish_room_event(self, room_id: str, payload: dict[str, Any]) -> None:
         channel = keys.ws_room_channel(self._prefix, room_id)
         try:
             await self._adapter.publish(channel, payload)
-        except Exception as exc:  # noqa: BLE001
+        except DRAGONFLY_BACKEND_ERRORS as exc:
             await self._handle_backend_failure(
                 policy=self._settings.dragonfly.fail_policy.ws_pubsub,
                 feature="ws_pubsub_publish",
@@ -172,11 +189,15 @@ class DragonflyService:
         user_key = keys.ws_presence_user_conn(
             self._prefix, user_id, room_id, connection_id
         )
+        online_key = keys.ws_presence_room_online_zset(self._prefix, room_id)
+        online_member = keys.ws_presence_conn_member(user_id, connection_id)
         ttl = self._settings.ws.presence_ttl_seconds
+        expires_at = int(datetime.now(UTC).timestamp()) + ttl
         try:
             await self._adapter.set_text(room_key, "1", ttl_seconds=ttl)
             await self._adapter.set_text(user_key, "1", ttl_seconds=ttl)
-        except Exception as exc:  # noqa: BLE001
+            await self._adapter.zadd(online_key, online_member, expires_at)
+        except DRAGONFLY_BACKEND_ERRORS as exc:
             await self._handle_backend_failure(
                 policy=self._settings.dragonfly.fail_policy.ws_presence,
                 feature="ws_presence_set",
@@ -196,11 +217,15 @@ class DragonflyService:
         user_key = keys.ws_presence_user_conn(
             self._prefix, user_id, room_id, connection_id
         )
+        online_key = keys.ws_presence_room_online_zset(self._prefix, room_id)
+        online_member = keys.ws_presence_conn_member(user_id, connection_id)
         ttl = self._settings.ws.presence_ttl_seconds
+        expires_at = int(datetime.now(UTC).timestamp()) + ttl
         try:
             await self._adapter.touch(room_key, ttl)
             await self._adapter.touch(user_key, ttl)
-        except Exception as exc:  # noqa: BLE001
+            await self._adapter.zadd(online_key, online_member, expires_at)
+        except DRAGONFLY_BACKEND_ERRORS as exc:
             await self._handle_backend_failure(
                 policy=self._settings.dragonfly.fail_policy.ws_presence,
                 feature="ws_presence_touch",
@@ -220,10 +245,23 @@ class DragonflyService:
         user_key = keys.ws_presence_user_conn(
             self._prefix, user_id, room_id, connection_id
         )
+        online_key = keys.ws_presence_room_online_zset(self._prefix, room_id)
+        online_member = keys.ws_presence_conn_member(user_id, connection_id)
+        user_presence_pattern = keys.ws_presence_user_conn_pattern(
+            self._prefix, user_id
+        )
+        last_seen_key = keys.ws_presence_user_last_seen(self._prefix, user_id)
         try:
             await self._adapter.delete(room_key)
             await self._adapter.delete(user_key)
-        except Exception as exc:  # noqa: BLE001
+            await self._adapter.zrem(online_key, online_member)
+            remaining_connections = await self._adapter.scan_keys(user_presence_pattern)
+            if not remaining_connections:
+                await self._adapter.set_text(
+                    last_seen_key,
+                    str(int(datetime.now(UTC).timestamp())),
+                )
+        except DRAGONFLY_BACKEND_ERRORS as exc:
             await self._handle_backend_failure(
                 policy=self._settings.dragonfly.fail_policy.ws_presence,
                 feature="ws_presence_clear",
@@ -231,10 +269,14 @@ class DragonflyService:
             )
 
     async def list_room_online_users(self, room_id: str) -> list[str]:
-        pattern = keys.ws_presence_room_conn_pattern(self._prefix, room_id)
+        online_key = keys.ws_presence_room_online_zset(self._prefix, room_id)
+        now_unix = int(datetime.now(UTC).timestamp())
         try:
-            conn_keys = await self._adapter.scan_keys(pattern)
-        except Exception as exc:  # noqa: BLE001
+            await self._adapter.zremrangebyscore(online_key, "-inf", str(now_unix))
+            members = await self._adapter.zrangebyscore(
+                online_key, f"({now_unix}", "+inf"
+            )
+        except DRAGONFLY_BACKEND_ERRORS as exc:
             await self._handle_backend_failure(
                 policy=self._settings.dragonfly.fail_policy.ws_presence,
                 feature="ws_presence_list",
@@ -243,16 +285,38 @@ class DragonflyService:
             return []
 
         online_users: set[str] = set()
-        for key in conn_keys:
-            parts = key.split(":")
-            try:
-                user_idx = parts.index("user")
-                user_id = parts[user_idx + 1]
-            except (ValueError, IndexError):
+        for member in members:
+            parts = member.split(":", maxsplit=1)
+            if len(parts) != 2:
+                continue
+            user_id, connection_id = parts
+            if not user_id or not connection_id:
                 continue
             if user_id:
                 online_users.add(user_id)
         return sorted(online_users)
+
+    async def get_user_presence(self, user_id: str) -> tuple[bool, datetime | None]:
+        user_presence_pattern = keys.ws_presence_user_conn_pattern(
+            self._prefix, user_id
+        )
+        last_seen_key = keys.ws_presence_user_last_seen(self._prefix, user_id)
+        try:
+            connection_keys = await self._adapter.scan_keys(user_presence_pattern)
+            if connection_keys:
+                return True, None
+            last_seen = await self._adapter.get_text(last_seen_key)
+        except DRAGONFLY_BACKEND_ERRORS as exc:
+            await self._handle_backend_failure(
+                policy=self._settings.dragonfly.fail_policy.ws_presence,
+                feature="ws_presence_user_get",
+                exc=exc,
+            )
+            return False, None
+
+        if last_seen is None:
+            return False, None
+        return False, datetime.fromtimestamp(int(last_seen), UTC)
 
     async def set_ws_typing_state(
         self,
@@ -272,7 +336,7 @@ class DragonflyService:
                 return True
             deleted = await self._adapter.delete(key)
             return deleted > 0
-        except Exception as exc:  # noqa: BLE001
+        except DRAGONFLY_BACKEND_ERRORS as exc:
             await self._handle_backend_failure(
                 policy=self._settings.dragonfly.fail_policy.ws_presence,
                 feature="ws_typing_set",
@@ -284,7 +348,7 @@ class DragonflyService:
         key = keys.auth_revoked_jti(self._prefix, jti)
         try:
             await self._adapter.set_text(key, "1", ttl_seconds=ttl_seconds)
-        except Exception as exc:  # noqa: BLE001
+        except DRAGONFLY_BACKEND_ERRORS as exc:
             await self._handle_backend_failure(
                 policy=self._settings.dragonfly.fail_policy.auth_state,
                 feature="auth_revoke_jti",
@@ -295,7 +359,7 @@ class DragonflyService:
         key = keys.auth_revoked_jti(self._prefix, jti)
         try:
             return await self._adapter.get_text(key) is not None
-        except Exception as exc:  # noqa: BLE001
+        except DRAGONFLY_BACKEND_ERRORS as exc:
             await self._handle_backend_failure(
                 policy=self._settings.dragonfly.fail_policy.auth_state,
                 feature="auth_check_jti",
@@ -311,7 +375,7 @@ class DragonflyService:
                 str(iat),
                 ttl_seconds=self._settings.auth_state.user_cutoff_ttl_seconds,
             )
-        except Exception as exc:  # noqa: BLE001
+        except DRAGONFLY_BACKEND_ERRORS as exc:
             await self._handle_backend_failure(
                 policy=self._settings.dragonfly.fail_policy.auth_state,
                 feature="auth_set_cutoff",
@@ -322,7 +386,7 @@ class DragonflyService:
         key = keys.auth_user_cutoff(self._prefix, user_id)
         try:
             value = await self._adapter.get_text(key)
-        except Exception as exc:  # noqa: BLE001
+        except DRAGONFLY_BACKEND_ERRORS as exc:
             await self._handle_backend_failure(
                 policy=self._settings.dragonfly.fail_policy.auth_state,
                 feature="auth_get_cutoff",
@@ -347,7 +411,7 @@ class DragonflyService:
             await self._adapter.set_json(session_key, session, ttl_seconds=ttl_seconds)
             await self._adapter.sadd(user_sessions_key, session["id"])
             await self._adapter.expire(user_sessions_key, ttl_seconds)
-        except Exception as exc:  # noqa: BLE001
+        except DRAGONFLY_BACKEND_ERRORS as exc:
             await self._handle_backend_failure(
                 policy=self._settings.dragonfly.fail_policy.auth_state,
                 feature="auth_refresh_create",
@@ -358,7 +422,7 @@ class DragonflyService:
         session_key = keys.auth_refresh_session(self._prefix, session_id)
         try:
             return await self._adapter.get_json(session_key)
-        except Exception as exc:  # noqa: BLE001
+        except DRAGONFLY_BACKEND_ERRORS as exc:
             await self._handle_backend_failure(
                 policy=self._settings.dragonfly.fail_policy.auth_state,
                 feature="auth_refresh_get",
@@ -375,7 +439,7 @@ class DragonflyService:
         session_key = keys.auth_refresh_session(self._prefix, session["id"])
         try:
             await self._adapter.set_json(session_key, session, ttl_seconds=ttl_seconds)
-        except Exception as exc:  # noqa: BLE001
+        except DRAGONFLY_BACKEND_ERRORS as exc:
             await self._handle_backend_failure(
                 policy=self._settings.dragonfly.fail_policy.auth_state,
                 feature="auth_refresh_save",
@@ -395,7 +459,7 @@ class DragonflyService:
                 session["revoked_at"] = now_unix
                 ttl = max(int(session["expires_at"]) - now_unix, 1)
                 await self.save_refresh_session(session=session, ttl_seconds=ttl)
-        except Exception as exc:  # noqa: BLE001
+        except DRAGONFLY_BACKEND_ERRORS as exc:
             await self._handle_backend_failure(
                 policy=self._settings.dragonfly.fail_policy.auth_state,
                 feature="auth_refresh_revoke_all",
@@ -409,7 +473,7 @@ class DragonflyService:
                 key=key,
                 ttl_seconds=self._settings.auth_state.refresh_lock_ttl_seconds,
             )
-        except Exception as exc:  # noqa: BLE001
+        except DRAGONFLY_BACKEND_ERRORS as exc:
             await self._handle_backend_failure(
                 policy=self._settings.dragonfly.fail_policy.auth_state,
                 feature="auth_refresh_lock",
@@ -421,7 +485,7 @@ class DragonflyService:
         key = keys.auth_refresh_lock(self._prefix, session_id)
         try:
             await self._adapter.release_lock(key=key, token=token)
-        except Exception as exc:  # noqa: BLE001
+        except DRAGONFLY_BACKEND_ERRORS as exc:
             await self._handle_backend_failure(
                 policy=self._settings.dragonfly.fail_policy.auth_state,
                 feature="auth_refresh_unlock",
@@ -432,7 +496,7 @@ class DragonflyService:
         key = keys.authz_room_access(self._prefix, room_id, user_id)
         try:
             value = await self._adapter.get_text(key)
-        except Exception as exc:  # noqa: BLE001
+        except DRAGONFLY_BACKEND_ERRORS as exc:
             await self._handle_backend_failure(
                 policy=self._settings.dragonfly.fail_policy.authz_cache,
                 feature="authz_room_get",
@@ -453,7 +517,7 @@ class DragonflyService:
                 "1" if allowed else "0",
                 ttl_seconds=self._settings.auth_state.authz_cache_ttl_seconds,
             )
-        except Exception as exc:  # noqa: BLE001
+        except DRAGONFLY_BACKEND_ERRORS as exc:
             await self._handle_backend_failure(
                 policy=self._settings.dragonfly.fail_policy.authz_cache,
                 feature="authz_room_set",
@@ -464,7 +528,7 @@ class DragonflyService:
         pattern = keys.authz_room_access_pattern(self._prefix, room_id)
         try:
             await self._adapter.delete_by_pattern(pattern)
-        except Exception as exc:  # noqa: BLE001
+        except DRAGONFLY_BACKEND_ERRORS as exc:
             await self._handle_backend_failure(
                 policy=self._settings.dragonfly.fail_policy.authz_cache,
                 feature="authz_room_invalidate",
@@ -475,7 +539,7 @@ class DragonflyService:
         key = keys.authz_message_owner(self._prefix, message_id)
         try:
             return await self._adapter.get_text(key)
-        except Exception as exc:  # noqa: BLE001
+        except DRAGONFLY_BACKEND_ERRORS as exc:
             await self._handle_backend_failure(
                 policy=self._settings.dragonfly.fail_policy.authz_cache,
                 feature="authz_message_get",
@@ -491,7 +555,7 @@ class DragonflyService:
                 owner_id,
                 ttl_seconds=self._settings.auth_state.authz_cache_ttl_seconds,
             )
-        except Exception as exc:  # noqa: BLE001
+        except DRAGONFLY_BACKEND_ERRORS as exc:
             await self._handle_backend_failure(
                 policy=self._settings.dragonfly.fail_policy.authz_cache,
                 feature="authz_message_set",
@@ -502,7 +566,7 @@ class DragonflyService:
         key = keys.authz_message_owner(self._prefix, message_id)
         try:
             await self._adapter.delete(key)
-        except Exception as exc:  # noqa: BLE001
+        except DRAGONFLY_BACKEND_ERRORS as exc:
             await self._handle_backend_failure(
                 policy=self._settings.dragonfly.fail_policy.authz_cache,
                 feature="authz_message_invalidate",
@@ -520,7 +584,7 @@ class DragonflyService:
         )
         try:
             return await self._adapter.get_text(key)
-        except Exception as exc:  # noqa: BLE001
+        except DRAGONFLY_BACKEND_ERRORS as exc:
             await self._handle_backend_failure(
                 policy=self._settings.dragonfly.fail_policy.ws_pubsub,
                 feature="ws_idempotency_get",
@@ -544,7 +608,7 @@ class DragonflyService:
                 message_id,
                 ttl_seconds=self._settings.ws.message_idempotency_ttl_seconds,
             )
-        except Exception as exc:  # noqa: BLE001
+        except DRAGONFLY_BACKEND_ERRORS as exc:
             await self._handle_backend_failure(
                 policy=self._settings.dragonfly.fail_policy.ws_pubsub,
                 feature="ws_idempotency_set",
@@ -562,7 +626,7 @@ class DragonflyService:
         )
         try:
             return await self._adapter.acquire_lock(key=key, ttl_seconds=5)
-        except Exception as exc:  # noqa: BLE001
+        except DRAGONFLY_BACKEND_ERRORS as exc:
             await self._handle_backend_failure(
                 policy=self._settings.dragonfly.fail_policy.ws_pubsub,
                 feature="ws_idempotency_lock",
@@ -584,7 +648,7 @@ class DragonflyService:
         )
         try:
             await self._adapter.release_lock(key=key, token=token)
-        except Exception as exc:  # noqa: BLE001
+        except DRAGONFLY_BACKEND_ERRORS as exc:
             await self._handle_backend_failure(
                 policy=self._settings.dragonfly.fail_policy.ws_pubsub,
                 feature="ws_idempotency_unlock",

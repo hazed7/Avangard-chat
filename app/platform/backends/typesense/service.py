@@ -1,5 +1,6 @@
 from datetime import datetime
 
+import httpx
 from fastapi import HTTPException
 
 from app.platform.backends.typesense.adapter import TypesenseAdapter
@@ -7,6 +8,13 @@ from app.platform.config.settings import Settings
 from app.platform.observability.logger import get_logger
 
 logger = get_logger("typesense")
+TYPESENSE_BACKEND_ERRORS = (
+    httpx.HTTPError,
+    OSError,
+    TimeoutError,
+    ValueError,
+    RuntimeError,
+)
 
 
 def _filter_value(value: str) -> str:
@@ -63,7 +71,7 @@ class TypesenseService:
                     "created_at": int(created_at.timestamp()),
                 },
             )
-        except Exception as exc:  # noqa: BLE001
+        except TYPESENSE_BACKEND_ERRORS as exc:
             await self._handle_failure(feature="upsert_message", exc=exc)
 
     async def delete_message(self, *, message_id: str) -> None:
@@ -72,7 +80,7 @@ class TypesenseService:
                 collection=self._collection,
                 document_id=message_id,
             )
-        except Exception as exc:  # noqa: BLE001
+        except TYPESENSE_BACKEND_ERRORS as exc:
             await self._handle_failure(feature="delete_message", exc=exc)
 
     async def search_message_ids(
@@ -98,7 +106,7 @@ class TypesenseService:
                 filter_by=filter_by,
                 per_page=fetch_count,
             )
-        except Exception as exc:  # noqa: BLE001
+        except TYPESENSE_BACKEND_ERRORS as exc:
             await self._handle_failure(feature="search_message_ids", exc=exc)
             return []
 
@@ -131,7 +139,7 @@ class TypesenseService:
                 page=page,
                 per_page=limit,
             )
-        except Exception as exc:  # noqa: BLE001
+        except TYPESENSE_BACKEND_ERRORS as exc:
             await self._handle_failure(feature="search_message_ids", exc=exc)
             return [], False
 

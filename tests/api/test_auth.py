@@ -49,6 +49,16 @@ def test_login_rejects_invalid_credentials(client: TestClient):
     assert response.json()["detail"] == "Invalid credentials"
 
 
+def test_login_rejects_unknown_username_without_server_error(client: TestClient):
+    response = client.post(
+        "/auth/login",
+        json={"username": "missing-user", "password": "wrong-password"},
+    )
+
+    assert response.status_code == 401
+    assert response.json()["detail"] == "Invalid credentials"
+
+
 def test_register_rejects_duplicate_username(client: TestClient):
     register_user(client, "duplicate-user")
 
@@ -181,6 +191,21 @@ def test_logout_clears_refresh_cookie(client: TestClient):
     response = client.post(
         "/auth/logout",
         headers=auth_headers(register_payload["access_token"]),
+    )
+    assert response.status_code == 200
+    set_cookie_header = response.headers.get("set-cookie", "")
+    assert settings.refresh_cookie.name in set_cookie_header
+    assert "Max-Age=0" in set_cookie_header or "expires=" in set_cookie_header.lower()
+
+
+def test_logout_with_invalid_bearer_still_clears_refresh_cookie(client: TestClient):
+    register_payload = register_user(client, "logout-invalid-bearer-user")
+    assert register_payload["access_token"]
+    assert client.cookies.get(settings.refresh_cookie.name)
+
+    response = client.post(
+        "/auth/logout",
+        headers=auth_headers("not-a-valid-access-token"),
     )
     assert response.status_code == 200
     set_cookie_header = response.headers.get("set-cookie", "")

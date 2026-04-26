@@ -124,6 +124,31 @@ class DragonflyAdapter:
     async def expire(self, key: str, ttl_seconds: int) -> None:
         await self._require_client().expire(key, ttl_seconds)
 
+    async def zadd(self, key: str, member: str, score: float) -> None:
+        await self._require_client().zadd(key, {member: score})
+
+    async def zrem(self, key: str, member: str) -> None:
+        await self._require_client().zrem(key, member)
+
+    async def zremrangebyscore(
+        self,
+        key: str,
+        min_score: str | float,
+        max_score: str | float,
+    ) -> int:
+        return int(
+            await self._require_client().zremrangebyscore(key, min_score, max_score)
+        )
+
+    async def zrangebyscore(
+        self,
+        key: str,
+        min_score: str | float,
+        max_score: str | float,
+    ) -> list[str]:
+        members = await self._require_client().zrangebyscore(key, min_score, max_score)
+        return [str(member) for member in members]
+
     async def publish(self, channel: str, payload: dict[str, Any]) -> None:
         await self._require_client().publish(
             channel,

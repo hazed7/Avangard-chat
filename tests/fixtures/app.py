@@ -8,7 +8,9 @@ from mongomock_motor import AsyncMongoMockClient
 
 from app.main import app
 from app.modules.messages.model import Message
+from app.modules.messages.unread.model import RoomUnreadCounter
 from app.modules.rooms.model import ChatRoom
+from app.modules.system.cleanup_jobs.model import CleanupJob
 from app.modules.users.model import User
 from app.modules.ws.manager import manager
 from app.platform.backends.dragonfly.container import get_dragonfly_adapter_singleton
@@ -111,7 +113,7 @@ def client(monkeypatch: pytest.MonkeyPatch) -> TestClient:
     async def init_test_db() -> None:
         await init_beanie(
             database=mongo_client[db_name],
-            document_models=[User, Message, ChatRoom],
+            document_models=[User, Message, ChatRoom, RoomUnreadCounter, CleanupJob],
         )
 
     asyncio.run(_clear_dragonfly_keys())

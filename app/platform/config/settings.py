@@ -2,7 +2,7 @@ import base64
 import json
 from typing import Literal
 
-from pydantic import BaseModel, Field, IPvAnyNetwork, field_validator, model_validator
+from pydantic import BaseModel, IPvAnyNetwork, field_validator, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 FailPolicy = Literal["open", "closed"]
@@ -151,6 +151,7 @@ class Settings(BaseSettings):
 
     jwt_secret_key: str
     refresh_token_secret_key: str
+    message_cursor_secret_key: str
     jwt_algorithm: str = "HS256"
     access_token_ttl_minutes: int = 15
     refresh_token_ttl_days: int = 30
@@ -160,6 +161,8 @@ class Settings(BaseSettings):
 
     auth_rate_limit_window_seconds: int = 60
     auth_rate_limit_max_attempts: int = 10
+    message_search_rate_limit_window_seconds: int = 60
+    message_search_rate_limit_max_attempts: int = 30
 
     abuse_window_seconds: int = 300
     abuse_auth_ip_max_attempts: int = 200
@@ -184,17 +187,16 @@ class Settings(BaseSettings):
     ws_rate_limit_max_messages: int = 20
     ws_typing_rate_limit_window_seconds: int = 5
     ws_typing_rate_limit_max_events: int = 30
+    cleanup_job_worker_interval_seconds: int = 1
+    cleanup_job_max_attempts: int = 5
+    unread_reconcile_interval_seconds: int = 300
 
     auth_user_cutoff_ttl_seconds: int = 3600
     auth_refresh_lock_ttl_seconds: int = 5
     authz_cache_ttl_seconds: int = 60
 
     message_encryption_active_key_id: str = "v1"
-    message_encryption_keys: dict[str, str] = Field(
-        default_factory=lambda: {
-            "v1": "MDEyMzQ1Njc4OWFiY2RlZjAxMjM0NTY3ODlhYmNkZWY=",
-        }
-    )
+    message_encryption_keys: dict[str, str]
 
     s3_url: str
     s3_access_key: str = "minio_admin"
