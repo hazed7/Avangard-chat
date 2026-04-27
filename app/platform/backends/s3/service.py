@@ -3,6 +3,7 @@ import uuid
 from aiohttp import ClientResponse
 from fastapi import UploadFile
 from miniopy_async import Minio
+
 from app.platform.config.settings import settings
 from app.platform.observability.logger import get_logger
 
@@ -70,6 +71,8 @@ class S3Service:
         user_id: str,
         file: UploadFile,
     ) -> str | None:
+        if file.content_type not in CONTENT_TYPE_AVATAR:
+            return None
         object_name = f"{user_id}/{uuid.uuid4()}"
         return await self._upload_file(
             bucket=settings.s3_bucket_avatars,
@@ -82,9 +85,9 @@ class S3Service:
         room_id: str,
         file: UploadFile,
     ) -> str | None:
-        if not CONTENT_TYPE_PREFIX_ATTACHMENTS[file.content_type]:
+        if not CONTENT_TYPE_PREFIX_ATTACHMENTS.get(file.content_type):
             return None
-        object_name = f"{CONTENT_TYPE_PREFIX_ATTACHMENTS[file.content_type]}/{room_id}/{uuid.uuid4()}"
+        object_name = f"{CONTENT_TYPE_PREFIX_ATTACHMENTS.get(file.content_type)}/{room_id}/{uuid.uuid4()}"
         return await self._upload_file(
             bucket=settings.s3_bucket_attachments,
             object_name=object_name,

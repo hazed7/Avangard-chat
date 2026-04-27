@@ -6,6 +6,7 @@ from app.modules.system.dependencies import (
     verify_token,
     get_s3_service,
 )
+from app.modules.system.streaming_utils import stream_with_cleanup
 from app.modules.users.model import User
 from app.modules.users.schemas import UserResponse, serialize_user_response
 from app.platform.backends.dragonfly.service import DragonflyService
@@ -79,6 +80,11 @@ async def upload_avatar(
     if not avatar_path:
         raise HTTPException(status_code=422, detail="Image format not supported")
 
+    if user.avatar:
+        await s3_service.delete_file(
+            bucket=s3_settings.bucket_avatars,
+            object_name=user.avatar,
+        )
     user.avatar = avatar_path
     await user.save()
 
@@ -103,7 +109,7 @@ async def download_avatar(
         object_name=user.avatar,
     )
     return StreamingResponse(
-        content=response.content,
+        content=stream_with_cleanup(response=response),
         media_type=response.headers.get("content-type", "application/octet-stream"),
     )
 

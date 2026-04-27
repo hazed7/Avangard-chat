@@ -99,6 +99,7 @@ def test_rooms_and_messages_contract_shapes(client: TestClient):
             "is_deleted",
             "read_by",
             "created_at",
+            "attachments",
         },
     )
 
@@ -136,6 +137,7 @@ def test_rooms_and_messages_contract_shapes(client: TestClient):
             "is_deleted",
             "read_by",
             "created_at",
+            "attachments",
         },
     )
 
@@ -171,6 +173,7 @@ def test_rooms_and_messages_contract_shapes(client: TestClient):
             "is_deleted",
             "read_by",
             "created_at",
+            "attachments",
         },
     )
 

@@ -1,4 +1,5 @@
 import asyncio
+from unittest.mock import AsyncMock
 from uuid import uuid4
 
 import pytest
@@ -126,6 +127,12 @@ def client(monkeypatch: pytest.MonkeyPatch) -> TestClient:
     monkeypatch.setattr(
         "app.modules.system.dependencies.get_typesense_service_singleton",
         lambda: fake_typesense,
+    )
+
+    s3_mock = AsyncMock()
+    monkeypatch.setattr(
+        "app.main.get_s3_service_singleton",
+        lambda: s3_mock,
     )
 
     with TestClient(app) as test_client:

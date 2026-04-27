@@ -16,6 +16,7 @@ from app.modules.system.dependencies import (
     get_rate_limit_service,
     verify_token,
 )
+from app.modules.system.streaming_utils import stream_with_cleanup
 from app.platform.backends.dragonfly.rate_limit import RateLimitService
 from app.platform.http.errors import error_responses
 from app.platform.http.schemas import OperationOkResponse
@@ -181,7 +182,7 @@ async def download_attachment(
         user_id=user["sub"],
     )
     return StreamingResponse(
-        response.content,
+        content=stream_with_cleanup(response=response),
         media_type=response.headers.get("content-type", "application/octet-stream"),
     )
 
