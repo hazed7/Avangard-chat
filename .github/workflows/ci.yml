@@ -306,6 +306,20 @@ jobs:
       - name: Verify app is reachable
         run: curl --fail --silent --show-error http://localhost:8000/health/ready > /dev/null
 
+      - name: Verify LiveKit signal and ICE ports are reachable
+        run: |
+          python - <<'PY'
+          import socket
+
+          checks = [
+              ("127.0.0.1", 7880),
+              ("127.0.0.1", 7881),
+          ]
+          for host, port in checks:
+              with socket.create_connection((host, port), timeout=5):
+                  pass
+          PY
+
       - name: Check container status
         run: docker compose ps
 

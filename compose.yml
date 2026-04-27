@@ -11,6 +11,10 @@ services:
       - DRAGONFLY_URL=redis://dragonfly:6379/0
       - TYPESENSE_URL=http://typesense:8108
       - TYPESENSE_API_KEY=dev-typesense-key
+      - LIVEKIT_URL=ws://localhost:7880
+      - LIVEKIT_API_URL=http://livekit:7880
+      - LIVEKIT_API_KEY=devkey
+      - LIVEKIT_API_SECRET=secret
       - JWT_SECRET_KEY=change-me-access-secret
       - REFRESH_TOKEN_SECRET_KEY=change-me-refresh-secret
       - MESSAGE_CURSOR_SECRET_KEY=change-me-message-cursor-secret
@@ -21,6 +25,8 @@ services:
         condition: service_healthy
       dragonfly:
         condition: service_healthy
+      livekit:
+        condition: service_started
       typesense:
         condition: service_started
     healthcheck:
@@ -71,6 +77,18 @@ services:
       timeout: 3s
       retries: 20
       start_period: 3s
+    restart: unless-stopped
+
+  livekit:
+    container_name: livekit
+    image: livekit/livekit-server:latest
+    command: --config /etc/livekit.yaml
+    ports:
+      - "7880:7880"
+      - "7881:7881"
+      - "7882:7882/udp"
+    volumes:
+      - ./deploy/livekit.yaml:/etc/livekit.yaml:ro
     restart: unless-stopped
 
   typesense:

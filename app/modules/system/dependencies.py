@@ -6,6 +6,7 @@ from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from jwt import InvalidTokenError
 
 from app.modules.auth.service import AuthService
+from app.modules.calls.service import CallService
 from app.modules.messages.service import MessageService
 from app.modules.messages.unread.service import UnreadCounterService
 from app.modules.rooms.service import RoomService
@@ -14,6 +15,8 @@ from app.modules.users.model import User
 from app.platform.backends.dragonfly.container import get_dragonfly_service_singleton
 from app.platform.backends.dragonfly.rate_limit import RateLimitService
 from app.platform.backends.dragonfly.service import DragonflyService
+from app.platform.backends.livekit.container import get_livekit_service_singleton
+from app.platform.backends.livekit.service import LiveKitService
 from app.platform.backends.typesense.container import get_typesense_service_singleton
 from app.platform.backends.typesense.service import TypesenseService
 from app.platform.config.settings import settings
@@ -47,6 +50,10 @@ def get_dragonfly_service() -> DragonflyService:
 
 def get_typesense_service() -> TypesenseService:
     return get_typesense_service_singleton()
+
+
+def get_livekit_service() -> LiveKitService:
+    return get_livekit_service_singleton()
 
 
 @lru_cache
@@ -148,6 +155,18 @@ def get_message_service(
         typesense=typesense,
         unread_counters=unread_counters,
         cleanup_jobs=cleanup_jobs,
+    )
+
+
+def get_call_service(
+    room_service: RoomService = Depends(get_room_service),
+    dragonfly: DragonflyService = Depends(get_dragonfly_service),
+    livekit: LiveKitService = Depends(get_livekit_service),
+) -> CallService:
+    return CallService(
+        room_service=room_service,
+        dragonfly=dragonfly,
+        livekit=livekit,
     )
 
 

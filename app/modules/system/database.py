@@ -1,6 +1,7 @@
 from beanie import init_beanie
 from motor.motor_asyncio import AsyncIOMotorClient
 
+from app.modules.calls.model import CallSession
 from app.modules.messages.model import Message
 from app.modules.messages.unread.model import RoomUnreadCounter
 from app.modules.rooms.model import ChatRoom
@@ -13,5 +14,12 @@ async def init_db() -> None:
     client = AsyncIOMotorClient(settings.database.mongodb_url)
     await init_beanie(
         database=client[settings.database.db_name],
-        document_models=[User, Message, ChatRoom, RoomUnreadCounter, CleanupJob],
+        document_models=[
+            User,
+            Message,
+            ChatRoom,
+            RoomUnreadCounter,
+            CleanupJob,
+            CallSession,
+        ],
     )

@@ -8,6 +8,8 @@ from app.platform.http.client_ip import resolve_client_ip
 def _base_settings_kwargs() -> dict[str, object]:
     return {
         "mongodb_url": "mongodb://localhost:27017",
+        "livekit_api_key": "livekit-key",
+        "livekit_api_secret": "livekit-secret",
         "jwt_secret_key": "access-secret",
         "refresh_token_secret_key": "refresh-secret",
         "message_cursor_secret_key": "cursor-secret",
@@ -107,3 +109,28 @@ def test_settings_require_message_cursor_secret_key(
     kwargs.pop("message_cursor_secret_key")
     with pytest.raises(ValidationError):
         Settings(**kwargs)
+
+
+def test_settings_require_livekit_api_key(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.delenv("LIVEKIT_API_KEY", raising=False)
+    kwargs = _base_settings_kwargs()
+    kwargs.pop("livekit_api_key")
+    with pytest.raises(ValidationError):
+        Settings(**kwargs)
+
+
+def test_settings_require_livekit_api_secret(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.delenv("LIVEKIT_API_SECRET", raising=False)
+    kwargs = _base_settings_kwargs()
+    kwargs.pop("livekit_api_secret")
+    with pytest.raises(ValidationError):
+        Settings(**kwargs)
+
+
+def test_settings_default_livekit_token_ttl_is_ten_minutes() -> None:
+    config = Settings(**_base_settings_kwargs())
+    assert config.livekit_token_ttl_seconds == 600
