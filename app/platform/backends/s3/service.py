@@ -41,16 +41,13 @@ CONTENT_TYPE_PREFIX_ATTACHMENTS = {
     # documents
     "application/pdf": s3_settings.folder_documents,
     "application/msword": s3_settings.folder_documents,
-    "application/vnd.openxmlformats-officedocument.wordprocessingml.document":
-        s3_settings.folder_documents,
+    "application/vnd.openxmlformats-officedocument.wordprocessingml.document": s3_settings.folder_documents,
     "application/vnd.ms-powerpoint": s3_settings.folder_documents,
-    "application/vnd.openxmlformats-officedocument.presentationml.presentation":
-        s3_settings.folder_documents,
+    "application/vnd.openxmlformats-officedocument.presentationml.presentation": s3_settings.folder_documents,
     "application/vnd.apple.pages": s3_settings.folder_documents,
     "application/vnd.apple.keynote": s3_settings.folder_documents,
     "application/vnd.ms-excel": s3_settings.folder_documents,
-    "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet":
-        s3_settings.folder_documents,
+    "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet": s3_settings.folder_documents,
     "application/zip": s3_settings.folder_documents,
     "text/plain": s3_settings.folder_documents,
     "text/csv": s3_settings.folder_documents,
