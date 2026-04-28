@@ -10,6 +10,7 @@
   <img src="https://img.shields.io/badge/MongoDB-47A248?style=for-the-badge&logo=mongodb&logoColor=white" alt="MongoDB" />
   <img src="https://img.shields.io/badge/DragonflyDB-FF3D00?style=for-the-badge&logoColor=white" alt="DragonflyDB" />
   <img src="https://img.shields.io/badge/Typesense-D90368?style=for-the-badge&logoColor=white" alt="Typesense" />
+  <img src="https://img.shields.io/badge/Rustfs-0096FF?style=for-the-badge&logoColor=white" alt="Rustfs" />
 </p>
 
 Бэкенд чат-приложения на FastAPI:
@@ -19,6 +20,7 @@
 - зашифрованное хранение сообщений
 - полнотекстовый поиск (Typesense)
 - счётчики непрочитанных
+- api загрузки файлов / медиа-хранилище (Rustfs)
 
 ## Что реализовано
 
@@ -31,7 +33,7 @@
   - управление участниками групп
   - список комнат
 - Messages
-  - отправка, редактирование, удаление, отметка прочитанного
+  - отправка, редактирование, удаление, отметка прочитанного, прикрепление файлов
   - история и поиск
   - счётчики непрочитанных и read-state по комнате
 - WebSocket
@@ -98,7 +100,6 @@ uv run --group dev pre-commit run --all-files
 
 ## Что пока не реализовано
 
-- api загрузки файлов / медиа-хранилище
 - speech-to-text / text-to-speech
 - AI-модерация, перевод, саммаризация
 - фронт

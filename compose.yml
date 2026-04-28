@@ -16,9 +16,9 @@ services:
       - MESSAGE_CURSOR_SECRET_KEY=change-me-message-cursor-secret
       - MESSAGE_ENCRYPTION_ACTIVE_KEY_ID=v1
       - 'MESSAGE_ENCRYPTION_KEYS={"v1":"MDEyMzQ1Njc4OWFiY2RlZjAxMjM0NTY3ODlhYmNkZWY="}'
-      - S3_URL=minio:9000
-      - S3_ACCESS_KEY=minio_admin
-      - S3_SECRET_KEY=minio_admin
+      - S3_URL=s3:9000
+      - S3_ACCESS_KEY=s3_admin
+      - S3_SECRET_KEY=s3_admin
     depends_on:
       mongodb:
         condition: service_healthy
@@ -26,7 +26,7 @@ services:
         condition: service_healthy
       typesense:
         condition: service_started
-      minio:
+      s3:
         condition: service_healthy
     healthcheck:
       test:
@@ -88,26 +88,25 @@ services:
       - typesense_data:/data
     restart: unless-stopped
 
-  minio:
-    image: minio/minio:RELEASE.2025-09-07T16-13-09Z
-    command: server /data --console-address ":9001"
-    ports:
-      - "9000:9000"   # API
-      - "9001:9001"   # Web
-    environment:
-      MINIO_ROOT_USER: minio_admin
-      MINIO_ROOT_PASSWORD: minio_admin
-    volumes:
-      - minio_data:/data
-    healthcheck:
-      test: [ "CMD", "curl", "-f", "http://localhost:9000/minio/health/live" ]
-      interval: 30s
-      timeout: 5s
-      retries: 3
-      start_period: 10s
+  s3:
+    image: rustfs/rustfs:latest
+    container_name: rustfs
     restart: unless-stopped
+    ports:
+      - "9000:9000"
+    environment:
+      RUSTFS_ACCESS_KEY: s3_admin
+      RUSTFS_SECRET_KEY: s3_admin
+    volumes:
+      - rustfs_data:/data
+    healthcheck:
+      test: [ "CMD", "curl", "-f", "http://localhost:9000/health" ]
+      interval: 10s
+      timeout: 3s
+      retries: 5
+      start_period: 5s
 
 volumes:
   mongo_data:
   typesense_data:
-  minio_data:
+  rustfs_data:

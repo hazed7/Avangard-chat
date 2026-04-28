@@ -199,8 +199,8 @@ class Settings(BaseSettings):
     message_encryption_keys: dict[str, str]
 
     s3_url: str
-    s3_access_key: str = "minio_admin"
-    s3_secret_key: str = "minio_admin"
+    s3_access_key: str = "s3_admin"
+    s3_secret_key: str = "s3_admin"
     s3_bucket_avatars: str = "avangard-avatars"
     s3_bucket_attachments: str = "avangard-attachments"
     s3_folder_documents: str = "documents"
