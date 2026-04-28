@@ -15,7 +15,7 @@ from cryptography.hazmat.primitives.ciphers.aead import AESGCM
 from fastapi import HTTPException, UploadFile
 from pymongo.errors import PyMongoError
 
-from app.modules.messages.model import Message, Attachment
+from app.modules.messages.model import Attachment, Message
 from app.modules.messages.schemas import (
     MarkRoomReadResponse,
     MessageCreate,

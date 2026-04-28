@@ -3,7 +3,7 @@ from typing import List, Optional
 
 from pydantic import BaseModel, ConfigDict, Field
 
-from app.modules.messages.model import Message, Attachment
+from app.modules.messages.model import Attachment, Message
 from app.platform.persistence.links import linked_document_id
 
 

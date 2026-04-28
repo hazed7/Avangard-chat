@@ -3,7 +3,7 @@ from typing import List, Optional
 from uuid import uuid4
 
 from beanie import Document, Link
-from pydantic import Field, BaseModel
+from pydantic import BaseModel, Field
 from pymongo import DESCENDING, IndexModel
 
 from app.modules.rooms.model import ChatRoom

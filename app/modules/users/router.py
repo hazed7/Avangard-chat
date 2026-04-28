@@ -3,14 +3,14 @@ from starlette.responses import StreamingResponse
 
 from app.modules.system.dependencies import (
     get_dragonfly_service,
-    verify_token,
     get_s3_service,
+    verify_token,
 )
 from app.modules.system.streaming_utils import stream_with_cleanup
 from app.modules.users.model import User
 from app.modules.users.schemas import UserResponse, serialize_user_response
 from app.platform.backends.dragonfly.service import DragonflyService
-from app.platform.backends.s3.service import s3_settings, S3Service
+from app.platform.backends.s3.service import S3Service, s3_settings
 from app.platform.http.errors import error_responses
 
 router = APIRouter()
