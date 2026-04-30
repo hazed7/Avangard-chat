@@ -83,8 +83,8 @@ def upload_attachment(
     message_id: str,
     filename: str = "test.txt",
     content_type: str = "text/plain",
+    file_content: bytes = b"some text inside file",
 ) -> Response:
-    file_content = b"some text inside file"
     return client.post(
         f"/message/{message_id}/attachment",
         headers=auth_headers(access_token),

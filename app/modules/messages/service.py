@@ -32,7 +32,11 @@ from app.modules.rooms.service import RoomService
 from app.modules.system.cleanup_jobs.service import CleanupJobService
 from app.modules.users.model import User
 from app.platform.backends.dragonfly.service import DragonflyService
-from app.platform.backends.s3.service import S3Service, s3_settings
+from app.platform.backends.s3.service import (
+    S3Service,
+    get_attachment_upload_limit_bytes,
+    s3_settings,
+)
 from app.platform.backends.typesense.service import TypesenseService
 from app.platform.config.settings import settings
 from app.platform.observability.logger import get_logger
@@ -736,6 +740,13 @@ class MessageService:
         await self._ensure_message_owner(message, user_id)
         if message.is_deleted:
             raise HTTPException(status_code=422, detail="Message is deleted")
+        upload_limit = get_attachment_upload_limit_bytes(file.content_type)
+        if (
+            upload_limit is not None
+            and file.size is not None
+            and file.size > upload_limit
+        ):
+            raise HTTPException(status_code=422, detail="File too large")
         object_path = await self.s3_service.upload_message_attachment(
             room_id=str(message.room.ref.id),
             file=file,

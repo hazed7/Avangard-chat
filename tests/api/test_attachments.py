@@ -4,6 +4,7 @@ import uuid
 from fastapi.testclient import TestClient
 
 from app.modules.messages.model import Message
+from app.platform.backends.s3.service import s3_settings
 from tests.helpers.auth import register_user
 from tests.helpers.chat import (
     create_dm,
@@ -72,6 +73,72 @@ def test_upload_attachment_unsupported(client: TestClient):
     )
 
     assert response.status_code == 422
+
+
+def test_upload_attachment_too_large(client: TestClient, monkeypatch):
+    monkeypatch.setattr(
+        s3_settings,
+        "attachment_document_max_upload_size_bytes",
+        4,
+    )
+    alice = register_user(client, "dm-alice")
+    bob = register_user(client, "dm-bob")
+
+    room = create_dm(client, alice["access_token"], bob["user"]["id"])
+
+    message = create_message(
+        client,
+        alice["access_token"],
+        room["id"],
+        text="here's the file you need",
+    )
+
+    response = upload_attachment(
+        client,
+        alice["access_token"],
+        message["id"],
+        file_content=b"too large",
+    )
+
+    assert response.status_code == 422
+
+
+def test_upload_video_attachment_uses_video_size_limit(
+    client: TestClient,
+    monkeypatch,
+):
+    monkeypatch.setattr(
+        s3_settings,
+        "attachment_document_max_upload_size_bytes",
+        4,
+    )
+    monkeypatch.setattr(
+        s3_settings,
+        "attachment_video_max_upload_size_bytes",
+        20,
+    )
+    alice = register_user(client, "dm-alice")
+    bob = register_user(client, "dm-bob")
+
+    room = create_dm(client, alice["access_token"], bob["user"]["id"])
+
+    message = create_message(
+        client,
+        alice["access_token"],
+        room["id"],
+        text="here's the file you need",
+    )
+
+    response = upload_attachment(
+        client,
+        alice["access_token"],
+        message["id"],
+        filename="clip.mp4",
+        content_type="video/mp4",
+        file_content=b"small video bytes",
+    )
+
+    assert response.status_code == 200
 
 
 def test_upload_attachment_message_deleted(client: TestClient):
