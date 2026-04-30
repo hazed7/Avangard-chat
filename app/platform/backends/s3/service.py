@@ -67,18 +67,20 @@ CONTENT_TYPE_PREFIX_ATTACHMENTS = {
     "text/csv": s3_settings.folder_documents,
 }
 
+ATTACHMENT_UPLOAD_LIMIT_ATTRIBUTES = {
+    s3_settings.folder_photos: "attachment_photo_max_upload_size_bytes",
+    s3_settings.folder_video: "attachment_video_max_upload_size_bytes",
+    s3_settings.folder_audio: "attachment_audio_max_upload_size_bytes",
+    s3_settings.folder_documents: "attachment_document_max_upload_size_bytes",
+}
+
 
 def get_attachment_upload_limit_bytes(content_type: str | None) -> int | None:
     prefix = CONTENT_TYPE_PREFIX_ATTACHMENTS.get(content_type)
-    if prefix == s3_settings.folder_photos:
-        return s3_settings.attachment_photo_max_upload_size_bytes
-    if prefix == s3_settings.folder_video:
-        return s3_settings.attachment_video_max_upload_size_bytes
-    if prefix == s3_settings.folder_audio:
-        return s3_settings.attachment_audio_max_upload_size_bytes
-    if prefix == s3_settings.folder_documents:
-        return s3_settings.attachment_document_max_upload_size_bytes
-    return None
+    limit_attribute = ATTACHMENT_UPLOAD_LIMIT_ATTRIBUTES.get(prefix)
+    if not limit_attribute:
+        return None
+    return getattr(s3_settings, limit_attribute)
 
 
 class S3Service:
