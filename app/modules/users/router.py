@@ -74,7 +74,7 @@ async def upload_avatar(
     user = await User.find_one(User.id == user_token["sub"])
     if not user:
         raise HTTPException(status_code=404, detail="User not found")
-    if file.size > 50 * 1024 * 1024:
+    if file.size is not None and file.size > s3_settings.avatar_max_upload_size_bytes:
         raise HTTPException(status_code=422, detail="File too large")
     avatar_path = await s3_service.upload_user_avatar(user.id, file)
     if not avatar_path:

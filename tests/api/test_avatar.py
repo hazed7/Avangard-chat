@@ -1,7 +1,13 @@
 from fastapi.testclient import TestClient
 
+from app.platform.backends.s3.service import s3_settings
 from tests.helpers.auth import register_user
-from tests.helpers.user_profile import download_avatar, get_current_user, upload_avatar
+from tests.helpers.user_profile import (
+    avatar_image_bytes,
+    download_avatar,
+    get_current_user,
+    upload_avatar,
+)
 
 
 def test_upload_avatar_successful(client: TestClient):
@@ -62,6 +68,35 @@ def test_upload_avatar_not_supported(client: TestClient):
         alice["access_token"],
         "file.csv",
         "text/csv",
+    )
+
+    assert response.status_code == 422
+
+
+def test_upload_avatar_rejects_invalid_image_content(client: TestClient):
+    alice = register_user(client, "dm-alice")
+
+    response = upload_avatar(
+        client,
+        alice["access_token"],
+        file_content=b"not an actual image",
+    )
+
+    assert response.status_code == 422
+
+
+def test_upload_avatar_too_large(client: TestClient, monkeypatch):
+    monkeypatch.setattr(
+        s3_settings,
+        "avatar_max_upload_size_bytes",
+        4,
+    )
+    alice = register_user(client, "dm-alice")
+
+    response = upload_avatar(
+        client,
+        alice["access_token"],
+        file_content=avatar_image_bytes(),
     )
 
     assert response.status_code == 422

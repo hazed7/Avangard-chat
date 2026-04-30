@@ -2,7 +2,7 @@ import base64
 import json
 from typing import Literal
 
-from pydantic import BaseModel, IPvAnyNetwork, field_validator, model_validator
+from pydantic import BaseModel, Field, IPvAnyNetwork, field_validator, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 FailPolicy = Literal["open", "closed"]
@@ -141,6 +141,12 @@ class S3Settings(BaseModel):
     folder_photos: str
     folder_audio: str
     folder_video: str
+    avatar_max_upload_size_bytes: int = Field(gt=0)
+    avatar_max_pixels: int = Field(gt=0)
+    attachment_photo_max_upload_size_bytes: int = Field(gt=0)
+    attachment_video_max_upload_size_bytes: int = Field(gt=0)
+    attachment_audio_max_upload_size_bytes: int = Field(gt=0)
+    attachment_document_max_upload_size_bytes: int = Field(gt=0)
 
 
 class Settings(BaseSettings):
@@ -231,6 +237,12 @@ class Settings(BaseSettings):
     s3_folder_photos: str = "photos"
     s3_folder_audio: str = "audio"
     s3_folder_video: str = "video"
+    s3_avatar_max_upload_size_bytes: int = 10 * 1024 * 1024
+    s3_avatar_max_pixels: int = 16_777_216
+    s3_attachment_photo_max_upload_size_bytes: int = 25 * 1024 * 1024
+    s3_attachment_video_max_upload_size_bytes: int = 200 * 1024 * 1024
+    s3_attachment_audio_max_upload_size_bytes: int = 50 * 1024 * 1024
+    s3_attachment_document_max_upload_size_bytes: int = 50 * 1024 * 1024
 
     model_config = SettingsConfigDict(env_file=".env")
 
@@ -426,6 +438,20 @@ class Settings(BaseSettings):
             folder_photos=self.s3_folder_photos,
             folder_audio=self.s3_folder_audio,
             folder_video=self.s3_folder_video,
+            avatar_max_upload_size_bytes=self.s3_avatar_max_upload_size_bytes,
+            avatar_max_pixels=self.s3_avatar_max_pixels,
+            attachment_photo_max_upload_size_bytes=(
+                self.s3_attachment_photo_max_upload_size_bytes
+            ),
+            attachment_video_max_upload_size_bytes=(
+                self.s3_attachment_video_max_upload_size_bytes
+            ),
+            attachment_audio_max_upload_size_bytes=(
+                self.s3_attachment_audio_max_upload_size_bytes
+            ),
+            attachment_document_max_upload_size_bytes=(
+                self.s3_attachment_document_max_upload_size_bytes
+            ),
         )
 
 

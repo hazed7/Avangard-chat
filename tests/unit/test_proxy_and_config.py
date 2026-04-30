@@ -134,3 +134,30 @@ def test_settings_require_livekit_api_secret(
 def test_settings_default_livekit_token_ttl_is_ten_minutes() -> None:
     config = Settings(**_base_settings_kwargs())
     assert config.livekit_token_ttl_seconds == 600
+
+
+def test_settings_build_s3_upload_limits() -> None:
+    config = Settings(
+        **_base_settings_kwargs(),
+        s3_avatar_max_upload_size_bytes=123,
+        s3_avatar_max_pixels=456,
+        s3_attachment_photo_max_upload_size_bytes=1,
+        s3_attachment_video_max_upload_size_bytes=2,
+        s3_attachment_audio_max_upload_size_bytes=3,
+        s3_attachment_document_max_upload_size_bytes=4,
+    )
+
+    assert config.s3.avatar_max_upload_size_bytes == 123
+    assert config.s3.avatar_max_pixels == 456
+    assert config.s3.attachment_photo_max_upload_size_bytes == 1
+    assert config.s3.attachment_video_max_upload_size_bytes == 2
+    assert config.s3.attachment_audio_max_upload_size_bytes == 3
+    assert config.s3.attachment_document_max_upload_size_bytes == 4
+
+
+def test_settings_reject_non_positive_s3_upload_limits() -> None:
+    with pytest.raises(ValidationError):
+        Settings(
+            **_base_settings_kwargs(),
+            s3_avatar_max_upload_size_bytes=0,
+        ).s3
