@@ -125,6 +125,24 @@ services:
       retries: 5
       start_period: 5s
 
+  prometheus:
+    image: prom/prometheus:latest
+    container_name: avangard_prometheus
+    volumes:
+      - ./prometheus.yml:/etc/prometheus/prometheus.yml
+    ports:
+      - "9090:9090"
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+
+  grafana:
+    image: grafana/grafana:latest
+    container_name: avangard_grafana
+    ports:
+      - "3000:3000"
+    depends_on:
+      - prometheus
+
 volumes:
   mongo_data:
   typesense_data:
