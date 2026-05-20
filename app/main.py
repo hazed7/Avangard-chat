@@ -2,6 +2,8 @@ from contextlib import asynccontextmanager
 
 from fastapi import FastAPI
 from fastapi.openapi.utils import get_openapi
+#from prometheus_client import Counter, Summary, generate_latest, CONTENT_TYPE_LATEST
+from prometheus_fastapi_instrumentator import Instrumentator
 
 from app.modules.auth import router as auth
 from app.modules.calls import router as calls
@@ -64,6 +66,8 @@ app = FastAPI(
     lifespan=lifespan,
 )
 
+Instrumentator().instrument(app).expose(app)
+
 app.include_router(auth.router, prefix="/auth", tags=["Auth"])
 app.include_router(calls.router, prefix="/call", tags=["Calls"])
 app.include_router(health.router, prefix="/health", tags=["Health"])
@@ -95,3 +99,6 @@ def custom_openapi():
 
 
 app.openapi = custom_openapi
+
+
+
