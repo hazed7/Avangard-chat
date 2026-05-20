@@ -22,7 +22,8 @@ dependencies = [
   "redis==5.2.1",
   "uvicorn[standard]==0.30.6",
   "websockets==13.0",
-  "openai==2.36.0"
+  "openai==2.36.0",
+  "prometheus-fastapi-instrumentator>=7.1.0",
 ]
 
 [dependency-groups]
