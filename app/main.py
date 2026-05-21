@@ -2,6 +2,7 @@ from contextlib import asynccontextmanager
 
 from fastapi import FastAPI
 from fastapi.openapi.utils import get_openapi
+from prometheus_fastapi_instrumentator import Instrumentator
 
 from app.modules.auth import router as auth
 from app.modules.calls import router as calls
@@ -63,6 +64,8 @@ app = FastAPI(
     title="Avangard API",
     lifespan=lifespan,
 )
+
+Instrumentator().instrument(app).expose(app)
 
 app.include_router(auth.router, prefix="/auth", tags=["Auth"])
 app.include_router(calls.router, prefix="/call", tags=["Calls"])
