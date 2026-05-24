@@ -182,16 +182,3 @@ def get_auth_service(
     dragonfly: DragonflyService = Depends(get_dragonfly_service),
 ) -> AuthService:
     return AuthService(dragonfly=dragonfly)
-
-
-async def rate_limit_summary(
-    user: dict = Depends(verify_token),
-    rate_limit_service: RateLimitService = Depends(get_rate_limit_service),
-) -> None:
-    cfg = settings.summary_rate_limit
-    key = f"{settings.dragonfly.key_prefix}:rl:summary:user:{user['sub']}"
-    await rate_limit_service.check(
-        key=key,
-        window_seconds=cfg.window_seconds,
-        max_attempts=cfg.max_attempts,
-    )
