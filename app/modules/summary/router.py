@@ -9,8 +9,7 @@ from app.modules.summary.service import SummaryService
 from app.modules.system.dependencies import (
     get_message_crypto,
     get_room_service,
-    rate_limit_summary,
-    verify_token,
+    verify_token
 )
 from app.platform.security.message_crypto import MessageCrypto
 
@@ -24,7 +23,6 @@ async def get_room_summary(
     from_dt: Optional[datetime] = None,
     to_dt: Optional[datetime] = None,
     user: dict = Depends(verify_token),
-    _: None = Depends(rate_limit_summary),
     room_service: RoomService = Depends(get_room_service),
     crypto: MessageCrypto = Depends(get_message_crypto),
 ):

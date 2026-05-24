@@ -63,6 +63,21 @@ class AIAssistService:
                 status_code=502,
                 detail="AI rewriter returned an error",
             ) from exc
+        except openai.BadRequestError as exc:
+            raise HTTPException(
+                status_code=400,
+                detail="AI rewriter bad request",
+            ) from exc
+        except openai.AuthenticationError as exc:
+            raise HTTPException(
+                status_code=403,
+                detail="AI rewriter forbidden",
+            ) from exc
+        except openai.APIStatusError as exc:
+            raise HTTPException(
+                status_code=exc.status_code,
+                detail=exc.message,
+            ) from exc
 
         rewritten = response.choices[0].message.content.strip()
 
