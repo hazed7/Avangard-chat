@@ -1,0 +1,90 @@
+name: Deploy to Server
+
+on:
+  push:
+    branches:
+      - main
+      - master
+
+permissions:
+  packages: write
+  contents: read
+
+jobs:
+  build-and-push:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Log in to GitHub Container Registry
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Downcase repo name
+        id: repo_name
+        run: |
+          echo "lowercase=${GITHUB_REPOSITORY,,}" >> $GITHUB_OUTPUT
+
+      - name: Build and push Docker image
+        uses: docker/build-push-action@v5
+        with:
+          context: .
+          push: true
+          tags: |
+            ghcr.io/${{ steps.repo_name.outputs.lowercase }}/app:latest
+            ghcr.io/${{ steps.repo_name.outputs.lowercase }}/app:${{ github.sha }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+  deploy:
+    needs: build-and-push
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Downcase repo name
+        id: repo_name
+        run: |
+          echo "lowercase=${GITHUB_REPOSITORY,,}" >> $GITHUB_OUTPUT
+
+      - name: Copy config files to server
+        uses: appleboy/scp-action@v0.1.7
+        with:
+          host: ${{ secrets.SSH_HOST }}
+          username: ${{ secrets.SSH_USER }}
+          key: ${{ secrets.SSH_PRIVATE_KEY }}
+          source: "compose.yml,prometheus.yml,deploy/livekit.yaml"
+          target: "/opt/avangard-chat"
+          strip_components: 0
+
+      - name: Execute deployment commands via SSH
+        uses: appleboy/ssh-action@v1.0.3
+        with:
+          host: ${{ secrets.SSH_HOST }}
+          username: ${{ secrets.SSH_USER }}
+          key: ${{ secrets.SSH_PRIVATE_KEY }}
+          script: |
+            cd /opt/avangard-chat
+            
+            # Ensure .env file exists and has correct image and livekit settings
+            if [ ! -f .env ]; then
+              echo "Creating initial .env file..."
+              echo "DOCKER_IMAGE=ghcr.io/${{ steps.repo_name.outputs.lowercase }}/app:latest" > .env
+              echo "LIVEKIT_URL=ws://${{ secrets.SSH_HOST }}:7880" >> .env
+            else
+              # Update image tag just in case
+              sed -i 's|^DOCKER_IMAGE=.*|DOCKER_IMAGE=ghcr.io/${{ steps.repo_name.outputs.lowercase }}/app:latest|' .env
+            fi
+            
+            # Pull the new image and recreate containers
+            docker compose pull app
+            docker compose down app
+            docker compose up -d

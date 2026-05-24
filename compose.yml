@@ -2,7 +2,7 @@ services:
   app:
     container_name: avangard
     build: .
-    image: "avangard:latest"
+    image: "${DOCKER_IMAGE:-avangard:latest}"
     ports:
       - "8000:8000"
     environment:
@@ -10,20 +10,20 @@ services:
       - DB_NAME=chat_db
       - DRAGONFLY_URL=redis://dragonfly:6379/0
       - TYPESENSE_URL=http://typesense:8108
-      - TYPESENSE_API_KEY=dev-typesense-key
-      - LIVEKIT_URL=ws://localhost:7880
+      - TYPESENSE_API_KEY=${TYPESENSE_API_KEY:-dev-typesense-key}
+      - LIVEKIT_URL=${LIVEKIT_URL:-ws://localhost:7880}
       - LIVEKIT_API_URL=http://livekit:7880
-      - LIVEKIT_API_KEY=devkey
-      - LIVEKIT_API_SECRET=secret
-      - JWT_SECRET_KEY=change-me-access-secret
-      - REFRESH_TOKEN_SECRET_KEY=change-me-refresh-secret
-      - MESSAGE_CURSOR_SECRET_KEY=change-me-message-cursor-secret
-      - MESSAGE_ENCRYPTION_ACTIVE_KEY_ID=v1
-      - 'MESSAGE_ENCRYPTION_KEYS={"v1":"MDEyMzQ1Njc4OWFiY2RlZjAxMjM0NTY3ODlhYmNkZWY="}'
+      - LIVEKIT_API_KEY=${LIVEKIT_API_KEY:-devkey}
+      - LIVEKIT_API_SECRET=${LIVEKIT_API_SECRET:-secret}
+      - JWT_SECRET_KEY=${JWT_SECRET_KEY:-change-me-access-secret}
+      - REFRESH_TOKEN_SECRET_KEY=${REFRESH_TOKEN_SECRET_KEY:-change-me-refresh-secret}
+      - MESSAGE_CURSOR_SECRET_KEY=${MESSAGE_CURSOR_SECRET_KEY:-change-me-message-cursor-secret}
+      - MESSAGE_ENCRYPTION_ACTIVE_KEY_ID=${MESSAGE_ENCRYPTION_ACTIVE_KEY_ID:-v1}
+      - MESSAGE_ENCRYPTION_KEYS=${MESSAGE_ENCRYPTION_KEYS:-{"v1":"MDEyMzQ1Njc4OWFiY2RlZjAxMjM0NTY3ODlhYmNkZWY="}}
       - S3_URL=s3:9000
-      - S3_ACCESS_KEY=s3_admin
-      - S3_SECRET_KEY=s3_admin
-      - AI_API_KEY=ai_api_key
+      - S3_ACCESS_KEY=${S3_ACCESS_KEY:-s3_admin}
+      - S3_SECRET_KEY=${S3_SECRET_KEY:-s3_admin}
+      - AI_API_KEY=${AI_API_KEY:-ai_api_key}
     depends_on:
       mongodb:
         condition: service_healthy
@@ -89,6 +89,8 @@ services:
     container_name: livekit
     image: livekit/livekit-server:latest
     command: --config /etc/livekit.yaml
+    environment:
+      LIVEKIT_KEYS: "${LIVEKIT_API_KEY:-devkey}: ${LIVEKIT_API_SECRET:-secret}"
     ports:
       - "7880:7880"
       - "7881:7881"
