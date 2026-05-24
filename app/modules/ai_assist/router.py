@@ -2,11 +2,7 @@ from fastapi import APIRouter, Depends
 
 from app.modules.ai_assist.schemas import RewriteRequest, RewriteResponse
 from app.modules.ai_assist.service import AIAssistService
-from app.modules.system.dependencies import (
-    get_rate_limit_service,
-    verify_token
-)
-from app.platform.backends.dragonfly.rate_limit import RateLimitService
+from app.modules.system.dependencies import verify_token
 
 router = APIRouter()
 

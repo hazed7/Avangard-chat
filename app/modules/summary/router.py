@@ -9,7 +9,7 @@ from app.modules.summary.service import SummaryService
 from app.modules.system.dependencies import (
     get_message_crypto,
     get_room_service,
-    verify_token
+    verify_token,
 )
 from app.platform.security.message_crypto import MessageCrypto
 
