@@ -11,6 +11,7 @@ from tests.helpers.chat import (
     create_message,
     delete_message,
     download_attachment,
+    forward_messages,
     get_messages,
     upload_attachment,
 )
@@ -333,3 +334,44 @@ def test_download_attachment_not_found(client: TestClient):
     )
 
     assert response.status_code == 404
+
+
+def test_forward_message_with_attachment_successful(client: TestClient):
+    alice = register_user(client, "dm-alice")
+    bob = register_user(client, "dm-bob")
+
+    room = create_dm(client, alice["access_token"], bob["user"]["id"])
+
+    message = create_message(
+        client,
+        alice["access_token"],
+        room["id"],
+        text="here's the file you need",
+    )
+
+    message_with_attachment = upload_attachment(
+        client,
+        alice["access_token"],
+        message["id"],
+    )
+
+    john = register_user(client, "dm-john")
+
+    another_room = create_dm(client, alice["access_token"], john["user"]["id"])
+
+    forward_messages_response = forward_messages(
+        client,
+        alice["access_token"],
+        [message["id"]],
+        target_room_id=another_room["id"],
+    )
+
+    assert forward_messages_response.status_code == 200
+
+    print(message_with_attachment.json())
+    print(forward_messages_response.json())
+
+    source_attachment_id = message_with_attachment.json()["attachments"][0]["id"]
+    target_attachment_id = forward_messages_response.json()[0]["attachments"][0]["id"]
+
+    assert source_attachment_id != target_attachment_id

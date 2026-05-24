@@ -100,6 +100,7 @@ def test_rooms_and_messages_contract_shapes(client: TestClient):
             "read_by",
             "created_at",
             "attachments",
+            "original_sender_id",
         },
     )
 
@@ -138,6 +139,7 @@ def test_rooms_and_messages_contract_shapes(client: TestClient):
             "read_by",
             "created_at",
             "attachments",
+            "original_sender_id",
         },
     )
 
@@ -174,6 +176,7 @@ def test_rooms_and_messages_contract_shapes(client: TestClient):
             "read_by",
             "created_at",
             "attachments",
+            "original_sender_id",
         },
     )
 

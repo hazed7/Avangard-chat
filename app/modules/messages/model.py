@@ -30,6 +30,7 @@ class Message(Document):
     read_by: List[Link[User]] = Field(default_factory=list)
     created_at: datetime = Field(default_factory=lambda: datetime.now(UTC))
     attachments: List[Attachment] = Field(default_factory=list)
+    original_sender: Optional[Link[User]] = None
 
     class Settings:
         name = "messages"

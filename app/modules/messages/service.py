@@ -20,6 +20,7 @@ from app.modules.messages.schemas import (
     MarkRoomReadResponse,
     MessageCreate,
     MessageCursorPageResponse,
+    MessageForward,
     MessageResponse,
     MessageUpdate,
     RoomUnreadCount,
@@ -380,6 +381,62 @@ class MessageService:
             )
             raise rollback_exc
 
+    async def _cleanup_typesense(
+        self, message: Message, room: ChatRoom, sender_id: str, text: str
+    ):
+        should_cleanup_typesense = False
+        try:
+            should_cleanup_typesense = True
+            await self._index_message(message, text=text)
+            await self.unread_counters.increment_for_new_message(
+                room=room,
+                sender_id=sender_id,
+            )
+        except asyncio.CancelledError:
+            await self._rollback_send_after_insert(
+                message=message,
+                cleanup_typesense=should_cleanup_typesense,
+            )
+            raise
+        except MESSAGE_WRITE_ERRORS:
+            await self._rollback_send_after_insert(
+                message=message,
+                cleanup_typesense=should_cleanup_typesense,
+            )
+            raise
+
+    async def _send_encrypted(
+        self, message_encrypted: Message, room: ChatRoom, sender_id: str, text: str
+    ) -> MessageResponse:
+        await message_encrypted.insert()
+        await self._cleanup_typesense(message_encrypted, room, sender_id, text)
+        logger.info(
+            "event=message.send user_id=%s room_id=%s message_id=%s",
+            sender_id,
+            str(room.id),
+            str(message_encrypted.id),
+        )
+        return self._serialize_message(message_encrypted, text=text)
+
+    async def _copy_attachments(
+        self, attachments: list[Attachment], room_id: str
+    ) -> list[Attachment]:
+        copied_attachments = []
+        for attachment in attachments:
+            object_path = await self.s3_service.copy_message_attachment(
+                object_name_source=attachment.object_path,
+                room_id_target=room_id,
+                content_type=attachment.content_type,
+            )
+            copied_attachments.append(
+                Attachment(
+                    filename=attachment.filename,
+                    object_path=object_path,
+                    content_type=attachment.content_type,
+                )
+            )
+        return copied_attachments
+
     async def send(self, data: MessageCreate, sender_id: str) -> MessageResponse:
         room = await self.room_service.get_for_user(data.room_id, sender_id)
         sender = await self._get_user_or_404(sender_id)
@@ -400,34 +457,7 @@ class MessageService:
             read_by=[sender],
             created_at=created_at,
         )
-        await message.insert()
-        should_cleanup_typesense = False
-        try:
-            should_cleanup_typesense = True
-            await self._index_message(message, text=data.text)
-            await self.unread_counters.increment_for_new_message(
-                room=room,
-                sender_id=sender_id,
-            )
-        except asyncio.CancelledError:
-            await self._rollback_send_after_insert(
-                message=message,
-                cleanup_typesense=should_cleanup_typesense,
-            )
-            raise
-        except MESSAGE_WRITE_ERRORS:
-            await self._rollback_send_after_insert(
-                message=message,
-                cleanup_typesense=should_cleanup_typesense,
-            )
-            raise
-        logger.info(
-            "event=message.send user_id=%s room_id=%s message_id=%s",
-            sender_id,
-            str(room.id),
-            str(message.id),
-        )
-        return self._serialize_message(message, text=data.text)
+        return await self._send_encrypted(message, room, sender_id, data.text)
 
     async def get_history(
         self,
@@ -782,3 +812,68 @@ class MessageService:
         return await self.s3_service.download_file(
             s3_settings.bucket_attachments, attachment.object_path
         )
+
+    async def forward_messages(
+        self, data: MessageForward, user_id: str
+    ) -> list[MessageResponse]:
+        target_room = await self.room_service.get_for_user(data.target_room_id, user_id)
+        sender = await self._get_user_or_404(user_id)
+        messages = [
+            await self._get_message_or_404(message_id)
+            for message_id in data.message_ids
+        ]
+        room_ids = {linked_document_id(message.room) for message in messages}
+        created_at = datetime.now(UTC)
+        for room_id in room_ids:
+            await self.room_service.get_for_user(room_id, user_id)
+        result = []
+        for message in messages:
+            if message.is_deleted:
+                raise HTTPException(
+                    status_code=422, detail="Forwarded message mustn't be deleted"
+                )
+        for message in messages:
+            decrypted_text = self._decrypt_text(message)
+            encrypted = self._encrypt_text(
+                text=decrypted_text,
+                room_id=str(target_room.id),
+                sender_id=sender.id,
+                created_at=created_at,
+            )
+            forwarded_message = Message(
+                room=target_room,
+                sender=sender,
+                text_ciphertext=encrypted.ciphertext,
+                text_nonce=encrypted.nonce,
+                text_key_id=encrypted.key_id,
+                text_aad=encrypted.aad,
+                read_by=[sender],
+                created_at=created_at,
+                attachments=await self._copy_attachments(
+                    message.attachments, str(target_room.id)
+                ),
+                original_sender=message.sender
+                if message.original_sender is None
+                else message.original_sender,
+            )
+            try:
+                message_response = await self._send_encrypted(
+                    forwarded_message, target_room, user_id, decrypted_text
+                )
+                result.append(message_response)
+            except Exception:
+                logger.error(
+                    f"Failed to forward msg {message.id} to {target_room.id}",
+                    exc_info=True,
+                )
+                for attachment in forwarded_message.attachments:
+                    try:
+                        await self.s3_service.delete_file(
+                            s3_settings.bucket_attachments, attachment.object_path
+                        )
+                    except Exception:
+                        logger.error(
+                            f"Failed to delete attachment {attachment.id}",
+                            exc_info=True,
+                        )
+        return result

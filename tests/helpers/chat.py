@@ -77,6 +77,19 @@ def get_messages(
     return response.json()
 
 
+def forward_messages(
+    client: TestClient,
+    access_token: str,
+    message_ids: list[str],
+    target_room_id: str,
+) -> Response:
+    return client.post(
+        "/message/forward",
+        headers=auth_headers(access_token),
+        json={"message_ids": message_ids, "target_room_id": target_room_id},
+    )
+
+
 def upload_attachment(
     client: TestClient,
     access_token: str,

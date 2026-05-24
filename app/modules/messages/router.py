@@ -5,6 +5,7 @@ from app.modules.messages.schemas import (
     MarkRoomReadResponse,
     MessageCreate,
     MessageCursorPageResponse,
+    MessageForward,
     MessageResponse,
     MessageUpdate,
     UnreadCountsResponse,
@@ -194,3 +195,16 @@ async def delete_message(
 ):
     await message_service.delete(message_id=message_id, user_id=user["sub"])
     return OperationOkResponse()
+
+
+@router.post(
+    "/forward",
+    response_model=list[MessageResponse],
+    responses=error_responses(401, 403, 404),
+)
+async def forward_messages(
+    data: MessageForward,
+    user: dict = Depends(verify_token),
+    message_service: MessageService = Depends(get_message_service),
+):
+    return await message_service.forward_messages(data=data, user_id=user["sub"])

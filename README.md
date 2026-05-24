@@ -99,6 +99,10 @@ LiveKit:
 - ICE TCP fallback: `localhost:7881`
 - ICE UDP mux: `localhost:7882/udp`
 
+Grafana: `http://localhost:3000`
+
+Prometheus: `http://localhost:9090`
+
 Если фронт запускается вне докера, он должен подключаться к `LIVEKIT_URL`.
 Бэк ходит к LiveKit по `LIVEKIT_API_URL=http://livekit:7880`
 

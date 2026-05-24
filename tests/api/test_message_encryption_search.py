@@ -10,7 +10,7 @@ from app.modules.system import dependencies
 from app.modules.system.cleanup_jobs.model import CleanupJob
 from app.platform.config.settings import settings
 from tests.helpers.auth import auth_headers, register_user
-from tests.helpers.chat import create_message, create_room
+from tests.helpers.chat import create_message, create_room, forward_messages
 
 
 def test_messages_are_encrypted_at_rest(client):
@@ -629,3 +629,274 @@ def test_edit_failure_is_not_silent_when_rollback_save_fails(client, monkeypatch
             headers=auth_headers(owner["access_token"]),
             json={"text": "rollback-save-after"},
         )
+
+
+def test_forward_message(client):
+    user_forwarder = register_user(client, "user-forwarder")
+    regular_user = register_user(client, "regular-user")
+    source_room = create_room(
+        client,
+        user_forwarder["access_token"],
+        member_ids=[regular_user["user"]["id"]],
+        name="source-room",
+    )
+    target_room = create_room(
+        client,
+        user_forwarder["access_token"],
+        member_ids=[],
+        name="target-room",
+    )
+    first_message = create_message(
+        client,
+        user_forwarder["access_token"],
+        source_room["id"],
+        text="first message to forward",
+    )
+    second_message = create_message(
+        client,
+        regular_user["access_token"],
+        source_room["id"],
+        text="second message to forward",
+    )
+
+    response = forward_messages(
+        client,
+        user_forwarder["access_token"],
+        message_ids=[first_message["id"], second_message["id"]],
+        target_room_id=target_room["id"],
+    )
+
+    assert response.status_code == 200
+    response_json = response.json()
+
+    assert response_json[0]["original_sender_id"] == user_forwarder["user"]["id"]
+    assert response_json[0]["sender_id"] == user_forwarder["user"]["id"]
+    assert response_json[0]["id"] != first_message["id"]
+    assert response_json[0]["room_id"] == target_room["id"]
+    assert response_json[0]["text"] == first_message["text"]
+
+    assert response_json[1]["original_sender_id"] == regular_user["user"]["id"]
+    assert response_json[1]["sender_id"] == user_forwarder["user"]["id"]
+    assert response_json[1]["id"] != second_message["id"]
+    assert response_json[1]["room_id"] == target_room["id"]
+    assert response_json[1]["text"] == second_message["text"]
+
+
+def test_forward_forwarded_message(client):
+    user_forwarder = register_user(client, "user-forwarder")
+    regular_user = register_user(client, "regular-user")
+    source_room = create_room(
+        client,
+        user_forwarder["access_token"],
+        member_ids=[regular_user["user"]["id"]],
+        name="source-room",
+    )
+    target_room = create_room(
+        client,
+        user_forwarder["access_token"],
+        member_ids=[regular_user["user"]["id"]],
+        name="target-room",
+    )
+    message = create_message(
+        client,
+        user_forwarder["access_token"],
+        source_room["id"],
+        text="first message to forward",
+    )
+
+    response = forward_messages(
+        client,
+        user_forwarder["access_token"],
+        message_ids=[message["id"]],
+        target_room_id=target_room["id"],
+    )
+
+    assert response.status_code == 200
+    forwarded_message = response.json()[0]
+
+    response = forward_messages(
+        client,
+        regular_user["access_token"],
+        message_ids=[forwarded_message["id"]],
+        target_room_id=source_room["id"],
+    )
+
+    assert response.status_code == 200
+    response_json = response.json()
+
+    assert response_json[0]["original_sender_id"] == user_forwarder["user"]["id"]
+    assert response_json[0]["sender_id"] == regular_user["user"]["id"]
+    assert response_json[0]["id"] != forwarded_message["id"]
+    assert response_json[0]["room_id"] == source_room["id"]
+    assert response_json[0]["text"] == message["text"]
+
+
+def test_forward_message_target_room_no_access(client):
+    user_forwarder = register_user(client, "user-forwarder")
+    regular_user = register_user(client, "regular-user")
+    source_room = create_room(
+        client,
+        user_forwarder["access_token"],
+        member_ids=[regular_user["user"]["id"]],
+        name="source-room",
+    )
+    target_room = create_room(
+        client,
+        regular_user["access_token"],
+        member_ids=[],
+        name="target-room",
+    )
+    first_message = create_message(
+        client,
+        user_forwarder["access_token"],
+        source_room["id"],
+        text="first message to forward",
+    )
+    second_message = create_message(
+        client,
+        regular_user["access_token"],
+        source_room["id"],
+        text="second message to forward",
+    )
+
+    response = forward_messages(
+        client,
+        user_forwarder["access_token"],
+        message_ids=[first_message["id"], second_message["id"]],
+        target_room_id=target_room["id"],
+    )
+
+    assert response.status_code == 403
+
+
+def test_forward_message_target_room_not_found(client):
+    user_forwarder = register_user(client, "user-forwarder")
+    regular_user = register_user(client, "regular-user")
+    source_room = create_room(
+        client,
+        user_forwarder["access_token"],
+        member_ids=[regular_user["user"]["id"]],
+        name="source-room",
+    )
+    first_message = create_message(
+        client,
+        user_forwarder["access_token"],
+        source_room["id"],
+        text="first message to forward",
+    )
+    second_message = create_message(
+        client,
+        regular_user["access_token"],
+        source_room["id"],
+        text="second message to forward",
+    )
+
+    response = forward_messages(
+        client,
+        user_forwarder["access_token"],
+        message_ids=[first_message["id"], second_message["id"]],
+        target_room_id=first_message["id"],
+    )
+
+    assert response.status_code == 404
+
+
+def test_forward_message_not_found(client):
+    user_forwarder = register_user(client, "user-forwarder")
+    target_room = create_room(
+        client,
+        user_forwarder["access_token"],
+        member_ids=[],
+        name="target-room",
+    )
+
+    response = forward_messages(
+        client,
+        user_forwarder["access_token"],
+        message_ids=[target_room["id"]],
+        target_room_id=target_room["id"],
+    )
+
+    assert response.status_code == 404
+
+
+def test_forward_message_source_room_no_access(client):
+    user_forwarder = register_user(client, "user-forwarder")
+    regular_user = register_user(client, "regular-user")
+    source_room = create_room(
+        client,
+        regular_user["access_token"],
+        member_ids=[],
+        name="source-room",
+    )
+    target_room = create_room(
+        client,
+        user_forwarder["access_token"],
+        member_ids=[],
+        name="target-room",
+    )
+    first_message = create_message(
+        client,
+        regular_user["access_token"],
+        source_room["id"],
+        text="first message to forward",
+    )
+    second_message = create_message(
+        client,
+        regular_user["access_token"],
+        source_room["id"],
+        text="second message to forward",
+    )
+
+    response = forward_messages(
+        client,
+        user_forwarder["access_token"],
+        message_ids=[first_message["id"], second_message["id"]],
+        target_room_id=target_room["id"],
+    )
+
+    assert response.status_code == 403
+
+
+def test_forward_message_message_deleted(client):
+    user_forwarder = register_user(client, "user-forwarder")
+    regular_user = register_user(client, "regular-user")
+    source_room = create_room(
+        client,
+        user_forwarder["access_token"],
+        member_ids=[regular_user["user"]["id"]],
+        name="source-room",
+    )
+    target_room = create_room(
+        client,
+        user_forwarder["access_token"],
+        member_ids=[],
+        name="target-room",
+    )
+    first_message = create_message(
+        client,
+        user_forwarder["access_token"],
+        source_room["id"],
+        text="first message to forward",
+    )
+    second_message = create_message(
+        client,
+        regular_user["access_token"],
+        source_room["id"],
+        text="second message to forward",
+    )
+
+    delete_response = client.delete(
+        f"/message/{first_message['id']}",
+        headers=auth_headers(user_forwarder["access_token"]),
+    )
+    assert delete_response.status_code == 200
+
+    response = forward_messages(
+        client,
+        user_forwarder["access_token"],
+        message_ids=[first_message["id"], second_message["id"]],
+        target_room_id=target_room["id"],
+    )
+
+    assert response.status_code == 422

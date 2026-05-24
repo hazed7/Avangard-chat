@@ -4,18 +4,27 @@ from typing import List, Optional
 from pydantic import BaseModel, ConfigDict, Field
 
 from app.modules.messages.model import Attachment, Message
-from app.platform.persistence.links import linked_document_id
+from app.platform.persistence.links import (
+    linked_document_id,
+    optional_linked_document_id,
+)
 
 
 class MessageCreate(BaseModel):
     model_config = ConfigDict(extra="forbid")
     room_id: str
     text: str = Field(min_length=1, max_length=5000)
+    original_sender_id: str = None
 
 
 class MessageUpdate(BaseModel):
     model_config = ConfigDict(extra="forbid")
     text: str = Field(min_length=1, max_length=5000)
+
+
+class MessageForward(BaseModel):
+    message_ids: list[str]
+    target_room_id: str
 
 
 class AttachmentResponse(BaseModel):
@@ -36,6 +45,7 @@ class MessageResponse(BaseModel):
     read_by: List[str]
     created_at: datetime
     attachments: List[AttachmentResponse]
+    original_sender_id: Optional[str] = None
 
 
 class MessageCursorPageResponse(BaseModel):
@@ -85,5 +95,6 @@ def serialize_message_response(message: Message, *, text: str) -> MessageRespons
             "attachments": [
                 map_attachment(attachment) for attachment in message.attachments
             ],
+            "original_sender_id": optional_linked_document_id(message.original_sender),
         }
     )

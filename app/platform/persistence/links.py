@@ -13,5 +13,11 @@ def linked_document_id(value: Link[Any] | Document | Any) -> str:
     return str(value.id)
 
 
+def optional_linked_document_id(value: Link[Any] | Document | Any | None) -> str | None:
+    if value is None:
+        return None
+    return linked_document_id(value)
+
+
 def linked_document_ref(collection: str, document_id: Any) -> DBRef:
     return DBRef(collection, document_id)

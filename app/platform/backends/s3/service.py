@@ -4,6 +4,7 @@ import uuid
 from aiohttp import ClientResponse
 from fastapi import UploadFile
 from miniopy_async import Minio
+from miniopy_async.commonconfig import CopySource
 from PIL import Image, ImageOps, UnidentifiedImageError
 from pillow_heif import register_heif_opener
 
@@ -127,6 +128,24 @@ class S3Service:
             object_name=object_name,
             file=file,
         )
+
+    async def copy_message_attachment(
+        self,
+        object_name_source: str,
+        room_id_target: str,
+        content_type: str,
+    ) -> str:
+        prefix = CONTENT_TYPE_PREFIX_ATTACHMENTS.get(content_type)
+        object_name_target = f"{prefix}/{room_id_target}/{uuid.uuid4()}"
+        await self.s3_client.copy_object(
+            bucket_name=settings.s3_bucket_attachments,
+            object_name=object_name_target,
+            source=CopySource(
+                bucket_name=settings.s3_bucket_attachments,
+                object_name=object_name_source,
+            ),
+        )
+        return object_name_target
 
     async def download_file(self, bucket: str, object_name: str) -> ClientResponse:
         return await self.s3_client.get_object(
