@@ -2,7 +2,7 @@ services:
   app:
     container_name: avangard
     build: .
-    image: "avangard:latest"
+    image: "${DOCKER_IMAGE:-avangard:latest}"
     ports:
       - "8000:8000"
     environment:
@@ -10,20 +10,20 @@ services:
       - DB_NAME=chat_db
       - DRAGONFLY_URL=redis://dragonfly:6379/0
       - TYPESENSE_URL=http://typesense:8108
-      - TYPESENSE_API_KEY=dev-typesense-key
-      - LIVEKIT_URL=ws://localhost:7880
+      - TYPESENSE_API_KEY=${TYPESENSE_API_KEY:-dev-typesense-key}
+      - LIVEKIT_URL=${LIVEKIT_URL:-ws://localhost:7880}
       - LIVEKIT_API_URL=http://livekit:7880
-      - LIVEKIT_API_KEY=devkey
-      - LIVEKIT_API_SECRET=secret
-      - JWT_SECRET_KEY=change-me-access-secret
-      - REFRESH_TOKEN_SECRET_KEY=change-me-refresh-secret
-      - MESSAGE_CURSOR_SECRET_KEY=change-me-message-cursor-secret
-      - MESSAGE_ENCRYPTION_ACTIVE_KEY_ID=v1
-      - 'MESSAGE_ENCRYPTION_KEYS={"v1":"MDEyMzQ1Njc4OWFiY2RlZjAxMjM0NTY3ODlhYmNkZWY="}'
+      - LIVEKIT_API_KEY=${LIVEKIT_API_KEY:-devkey}
+      - LIVEKIT_API_SECRET=${LIVEKIT_API_SECRET:-secret}
+      - JWT_SECRET_KEY=${JWT_SECRET_KEY:-change-me-access-secret}
+      - REFRESH_TOKEN_SECRET_KEY=${REFRESH_TOKEN_SECRET_KEY:-change-me-refresh-secret}
+      - MESSAGE_CURSOR_SECRET_KEY=${MESSAGE_CURSOR_SECRET_KEY:-change-me-message-cursor-secret}
+      - MESSAGE_ENCRYPTION_ACTIVE_KEY_ID=${MESSAGE_ENCRYPTION_ACTIVE_KEY_ID:-v1}
+      - 'MESSAGE_ENCRYPTION_KEYS=${MESSAGE_ENCRYPTION_KEYS:-{"v1":"MDEyMzQ1Njc4OWFiY2RlZjAxMjM0NTY3ODlhYmNkZWY="}}'
       - S3_URL=s3:9000
-      - S3_ACCESS_KEY=s3_admin
-      - S3_SECRET_KEY=s3_admin
-      - AI_API_KEY=ai_api_key
+      - S3_ACCESS_KEY=${S3_ACCESS_KEY:-s3_admin}
+      - S3_SECRET_KEY=${S3_SECRET_KEY:-s3_admin}
+      - AI_API_KEY=${AI_API_KEY:-ai_api_key}
     depends_on:
       mongodb:
         condition: service_healthy
@@ -53,7 +53,7 @@ services:
     container_name: mongo
     image: mongo:7
     ports:
-      - "27017:27017"
+      - "127.0.0.1:27017:27017"
     volumes:
       - mongo_data:/data/db
     healthcheck:
@@ -76,7 +76,7 @@ services:
     container_name: dragonfly
     image: docker.dragonflydb.io/dragonflydb/dragonfly:v1.27.1
     ports:
-      - "6379:6379"
+      - "127.0.0.1:6379:6379"
     healthcheck:
       test: ["CMD", "redis-cli", "ping"]
       interval: 5s
@@ -89,6 +89,8 @@ services:
     container_name: livekit
     image: livekit/livekit-server:latest
     command: --config /etc/livekit.yaml
+    environment:
+      LIVEKIT_KEYS: "${LIVEKIT_API_KEY:-devkey}: ${LIVEKIT_API_SECRET:-secret}"
     ports:
       - "7880:7880"
       - "7881:7881"
@@ -100,9 +102,9 @@ services:
   typesense:
     container_name: typesense
     image: typesense/typesense:27.1
-    command: "--data-dir=/data --api-key=dev-typesense-key --enable-cors"
+    command: "--data-dir=/data --api-key=${TYPESENSE_API_KEY:-dev-typesense-key} --enable-cors"
     ports:
-      - "8108:8108"
+      - "127.0.0.1:8108:8108"
     volumes:
       - typesense_data:/data
     restart: unless-stopped
@@ -112,10 +114,10 @@ services:
     container_name: rustfs
     restart: unless-stopped
     ports:
-      - "9000:9000"
+      - "127.0.0.1:9000:9000"
     environment:
-      RUSTFS_ACCESS_KEY: s3_admin
-      RUSTFS_SECRET_KEY: s3_admin
+      RUSTFS_ACCESS_KEY: ${S3_ACCESS_KEY:-s3_admin}
+      RUSTFS_SECRET_KEY: ${S3_SECRET_KEY:-s3_admin}
     volumes:
       - rustfs_data:/data
     healthcheck:
@@ -131,7 +133,7 @@ services:
     volumes:
       - ./prometheus.yml:/etc/prometheus/prometheus.yml
     ports:
-      - "9090:9090"
+      - "127.0.0.1:9090:9090"
     extra_hosts:
       - "host.docker.internal:host-gateway"
 
@@ -139,7 +141,7 @@ services:
     image: grafana/grafana:latest
     container_name: avangard_grafana
     ports:
-      - "3000:3000"
+      - "127.0.0.1:3000:3000"
     depends_on:
       - prometheus
 
