@@ -198,7 +198,7 @@ def test_message_history_is_sorted_and_paginates_stably(client: TestClient):
     )
     assert full_history_response.status_code == 200
     full_history = full_history_response.json()["items"]
-    assert [item["id"] for item in full_history] == [first["id"]]
+    assert [item["id"] for item in full_history] == [second["id"]]
 
     first_page_next_cursor = full_history_response.json()["next_cursor"]
     assert first_page_next_cursor is not None
@@ -209,7 +209,7 @@ def test_message_history_is_sorted_and_paginates_stably(client: TestClient):
     assert paged_history_response.status_code == 200
     paged_history = paged_history_response.json()["items"]
     assert len(paged_history) == 1
-    assert paged_history[0]["id"] == second["id"]
+    assert paged_history[0]["id"] == first["id"]
 
 
 def test_users_can_only_list_their_own_rooms(client: TestClient):

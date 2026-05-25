@@ -474,13 +474,13 @@ class MessageService:
         if cursor:
             created_at, message_id = self._decode_history_cursor(cursor)
             query["$or"] = [
-                {"created_at": {"$gt": created_at}},
-                {"created_at": created_at, "_id": {"$gt": message_id}},
+                {"created_at": {"$lt": created_at}},
+                {"created_at": created_at, "_id": {"$lt": message_id}},
             ]
 
         messages = await (
             Message.find(query)
-            .sort([("created_at", 1), ("_id", 1)])
+            .sort([("created_at", -1), ("_id", -1)])
             .limit(limit + 1)
             .to_list()
         )
@@ -492,7 +492,9 @@ class MessageService:
             else None
         )
         return MessageCursorPageResponse(
-            items=[self._serialize_message(message) for message in page_items],
+            items=[
+                self._serialize_message(message) for message in reversed(page_items)
+            ],
             next_cursor=next_cursor,
         )
 
