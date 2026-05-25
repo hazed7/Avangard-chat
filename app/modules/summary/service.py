@@ -2,6 +2,7 @@ from datetime import datetime
 from typing import Optional
 
 import openai
+from beanie.operators import Eq
 from fastapi import HTTPException
 from openai import AsyncOpenAI
 
@@ -52,7 +53,7 @@ class SummaryService:
     ) -> list:
         conditions: list = [
             Message.room.id == room.id,
-            not Message.is_deleted,
+            Eq(Message.is_deleted, False),
         ]
 
         if from_dt:
