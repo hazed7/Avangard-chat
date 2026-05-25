@@ -8,7 +8,11 @@ from app.modules.system.dependencies import (
 )
 from app.modules.system.streaming_utils import stream_with_cleanup
 from app.modules.users.model import User
-from app.modules.users.schemas import UserResponse, serialize_user_response
+from app.modules.users.schemas import (
+    UserResponse,
+    UserUpdateRequest,
+    serialize_user_response,
+)
 from app.platform.backends.dragonfly.service import DragonflyService
 from app.platform.backends.s3.service import S3Service, s3_settings
 from app.platform.http.errors import error_responses
@@ -42,6 +46,23 @@ async def get_me(
     if not result:
         raise HTTPException(status_code=404, detail="User not found")
     return await _serialize_user_with_presence(result, dragonfly)
+
+
+@router.patch(
+    "/me",
+    response_model=UserResponse,
+    responses=error_responses(401, 404),
+)
+async def update_me(
+    data: UserUpdateRequest,
+    user: dict = Depends(verify_token),
+):
+    db_user = await User.find_one(User.id == user["sub"])
+    if not db_user:
+        raise HTTPException(status_code=404, detail="User not found")
+    db_user.full_name = data.full_name
+    await db_user.save()
+    return serialize_user_response(db_user)
 
 
 @router.get(

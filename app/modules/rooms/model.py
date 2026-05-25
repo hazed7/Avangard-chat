@@ -16,6 +16,7 @@ class ChatRoom(Document):
     created_by: Link[User]
     created_at: datetime = Field(default_factory=lambda: datetime.now(UTC))
     last_message_at: Optional[datetime] = None
+    last_message_preview: Optional[str] = None
 
     class Settings:
         name = "chat_rooms"

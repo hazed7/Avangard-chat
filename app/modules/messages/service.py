@@ -410,9 +410,20 @@ class MessageService:
         self, message_encrypted: Message, room: ChatRoom, sender_id: str, text: str
     ) -> MessageResponse:
         await message_encrypted.insert()
+        preview = text.replace("\n", " ")[:60]
+        if room.is_group:
+            sender = await User.find_one(User.id == sender_id)
+            if sender:
+                sender_display = sender.full_name or sender.username
+                preview = f"{sender_display}: {preview}"
         await ChatRoom.get_motor_collection().update_one(
             {"_id": room.id},
-            {"$set": {"last_message_at": message_encrypted.created_at}},
+            {
+                "$set": {
+                    "last_message_at": message_encrypted.created_at,
+                    "last_message_preview": preview,
+                }
+            },
         )
         await self._cleanup_typesense(message_encrypted, room, sender_id, text)
         logger.info(

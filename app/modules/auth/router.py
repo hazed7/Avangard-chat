@@ -4,6 +4,7 @@ from fastapi import APIRouter, Depends, Request, Response
 
 from app.modules.auth.schemas import (
     AuthResponse,
+    ChangePasswordRequest,
     LoginRequest,
     RegisterRequest,
     TokenResponse,
@@ -167,4 +168,18 @@ async def logout_all(
     await auth_service.revoke_all_user_sessions(token["sub"])
     await auth_service.logout(request.cookies.get(settings.refresh_cookie.name))
     _clear_refresh_cookie(response)
+    return {"ok": True}
+
+
+@router.post("/change-password", responses=error_responses(401))
+async def change_password(
+    data: ChangePasswordRequest,
+    token: dict = Depends(verify_token),
+    auth_service: AuthService = Depends(get_auth_service),
+):
+    await auth_service.change_password(
+        user_id=token["sub"],
+        old_password=data.old_password,
+        new_password=data.new_password,
+    )
     return {"ok": True}

@@ -32,6 +32,7 @@ class ChatRoomResponse(BaseModel):
     created_by_id: str
     created_at: datetime
     last_message_at: datetime | None = None
+    last_message_preview: str | None = None
 
 
 class UserRoomsResponse(BaseModel):
@@ -51,5 +52,6 @@ def serialize_chat_room_response(room: ChatRoom) -> ChatRoomResponse:
             "created_by_id": linked_document_id(room.created_by),
             "created_at": room.created_at,
             "last_message_at": room.last_message_at,
+            "last_message_preview": room.last_message_preview,
         }
     )
