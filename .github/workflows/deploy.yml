@@ -1,21 +1,77 @@
-name: Deploy to Server
+name: Production Deploy
 
 on:
-  push:
-    branches:
-      - main
-      - master
+  workflow_run:
+    workflows:
+      - Avangard CI
+    types:
+      - completed
+  workflow_dispatch:
+    inputs:
+      ref:
+        description: Git ref or commit SHA to deploy
+        required: false
+        default: main
 
 permissions:
-  packages: write
   contents: read
+  packages: write
+
+concurrency:
+  group: production-deploy
+  cancel-in-progress: false
 
 jobs:
-  build-and-push:
+  prepare:
+    if: >-
+      github.event_name == 'workflow_dispatch' ||
+      (
+        github.event.workflow_run.conclusion == 'success' &&
+        (
+          github.event.workflow_run.head_branch == 'main' ||
+          github.event.workflow_run.head_branch == 'master'
+        )
+      )
     runs-on: ubuntu-latest
+    outputs:
+      deploy_ref: ${{ steps.meta.outputs.deploy_ref }}
+      image_repo: ${{ steps.meta.outputs.image_repo }}
+
+    steps:
+      - name: Compute deployment metadata
+        id: meta
+        env:
+          MANUAL_REF: ${{ github.event.inputs.ref }}
+        run: |
+          set -euo pipefail
+
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
+            deploy_ref="${MANUAL_REF:-main}"
+          else
+            deploy_ref="${{ github.event.workflow_run.head_sha }}"
+          fi
+
+          echo "deploy_ref=${deploy_ref}" >> "$GITHUB_OUTPUT"
+          echo "image_repo=ghcr.io/${GITHUB_REPOSITORY,,}/app" >> "$GITHUB_OUTPUT"
+
+  build-and-push:
+    needs: prepare
+    runs-on: ubuntu-latest
+    outputs:
+      deploy_sha: ${{ steps.git_meta.outputs.deploy_sha }}
+      image_ref: ${{ steps.image_ref.outputs.image_ref }}
+
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
+        with:
+          ref: ${{ needs.prepare.outputs.deploy_ref }}
+
+      - name: Capture git metadata
+        id: git_meta
+        run: |
+          set -euo pipefail
+          echo "deploy_sha=$(git rev-parse HEAD)" >> "$GITHUB_OUTPUT"
 
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v3
@@ -27,48 +83,60 @@ jobs:
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
-      - name: Downcase repo name
-        id: repo_name
-        run: |
-          echo "lowercase=${GITHUB_REPOSITORY,,}" >> $GITHUB_OUTPUT
-
       - name: Build and push Docker image
+        id: build
         uses: docker/build-push-action@v5
         with:
           context: .
           push: true
           tags: |
-            ghcr.io/${{ steps.repo_name.outputs.lowercase }}/app:latest
-            ghcr.io/${{ steps.repo_name.outputs.lowercase }}/app:${{ github.sha }}
+            ${{ needs.prepare.outputs.image_repo }}:latest
+            ${{ needs.prepare.outputs.image_repo }}:sha-${{ steps.git_meta.outputs.deploy_sha }}
+          labels: |
+            org.opencontainers.image.revision=${{ steps.git_meta.outputs.deploy_sha }}
+            org.opencontainers.image.source=${{ github.server_url }}/${{ github.repository }}
           cache-from: type=gha
           cache-to: type=gha,mode=max
 
+      - name: Export immutable image reference
+        id: image_ref
+        run: |
+          set -euo pipefail
+          echo "image_ref=${{ needs.prepare.outputs.image_repo }}@${{ steps.build.outputs.digest }}" >> "$GITHUB_OUTPUT"
+
   deploy:
-    needs: build-and-push
+    needs:
+      - prepare
+      - build-and-push
     runs-on: ubuntu-latest
+    environment: production
+
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
+        with:
+          ref: ${{ needs.prepare.outputs.deploy_ref }}
 
-      - name: Downcase repo name
-        id: repo_name
-        run: |
-          echo "lowercase=${GITHUB_REPOSITORY,,}" >> $GITHUB_OUTPUT
-
-      - name: Copy config files to server
+      - name: Copy deployment assets to server
         uses: appleboy/scp-action@v0.1.7
         with:
           host: ${{ secrets.SSH_HOST }}
           username: ${{ secrets.SSH_USER }}
           key: ${{ secrets.SSH_PRIVATE_KEY }}
-          source: "compose.yml,prometheus.yml,deploy/livekit.yaml"
-          target: "/opt/avangard-chat"
+          source: "compose.yml,compose.prod.yml,prometheus.yml,deploy"
+          target: "${{ secrets.DEPLOY_PATH || '/opt/avangard-chat' }}"
           strip_components: 0
 
-      - name: Execute deployment commands via SSH
+      - name: Run production rollout
         uses: appleboy/ssh-action@v1.0.3
         env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          APP_DIR: ${{ secrets.DEPLOY_PATH || '/opt/avangard-chat' }}
+          DOCKER_IMAGE: ${{ needs.build-and-push.outputs.image_ref }}
+          DEPLOY_SHA: ${{ needs.build-and-push.outputs.deploy_sha }}
+          APP_DOMAIN: ${{ secrets.APP_DOMAIN }}
+          GHCR_USERNAME: ${{ secrets.GHCR_USERNAME }}
+          GHCR_TOKEN: ${{ secrets.GHCR_TOKEN }}
+          LIVEKIT_URL: ${{ secrets.LIVEKIT_URL }}
           JWT_SECRET_KEY: ${{ secrets.JWT_SECRET_KEY }}
           REFRESH_TOKEN_SECRET_KEY: ${{ secrets.REFRESH_TOKEN_SECRET_KEY }}
           MESSAGE_CURSOR_SECRET_KEY: ${{ secrets.MESSAGE_CURSOR_SECRET_KEY }}
@@ -80,68 +148,25 @@ jobs:
           S3_ACCESS_KEY: ${{ secrets.S3_ACCESS_KEY }}
           S3_SECRET_KEY: ${{ secrets.S3_SECRET_KEY }}
           AI_API_KEY: ${{ secrets.AI_API_KEY }}
+          MONGODB_IMAGE: ${{ secrets.MONGODB_IMAGE || 'mongo:4.4.29' }}
+          DRAGONFLY_IMAGE: ${{ secrets.DRAGONFLY_IMAGE || 'docker.dragonflydb.io/dragonflydb/dragonfly:v1.27.1' }}
+          LIVEKIT_IMAGE: ${{ secrets.LIVEKIT_IMAGE || 'livekit/livekit-server:v1.11.0' }}
+          TYPESENSE_IMAGE: ${{ secrets.TYPESENSE_IMAGE || 'typesense/typesense:27.1' }}
+          S3_IMAGE: ${{ secrets.S3_IMAGE || 'rustfs/rustfs:latest' }}
+          PROMETHEUS_IMAGE: ${{ secrets.PROMETHEUS_IMAGE || 'prom/prometheus:latest' }}
+          GRAFANA_IMAGE: ${{ secrets.GRAFANA_IMAGE || 'grafana/grafana:latest' }}
+          CADDY_IMAGE: ${{ secrets.CADDY_IMAGE || 'caddy:2.8' }}
+          AI_BASE_URL: ${{ secrets.AI_BASE_URL }}
+          AI_SUMMARY_MODEL: ${{ secrets.AI_SUMMARY_MODEL }}
+          AI_TRANSCRIPTION_MODEL: ${{ secrets.AI_TRANSCRIPTION_MODEL }}
+          TRUSTED_PROXY_CIDRS: ${{ secrets.TRUSTED_PROXY_CIDRS }}
         with:
           host: ${{ secrets.SSH_HOST }}
           username: ${{ secrets.SSH_USER }}
           key: ${{ secrets.SSH_PRIVATE_KEY }}
-          envs: GITHUB_TOKEN,JWT_SECRET_KEY,REFRESH_TOKEN_SECRET_KEY,MESSAGE_CURSOR_SECRET_KEY,MESSAGE_ENCRYPTION_ACTIVE_KEY_ID,MESSAGE_ENCRYPTION_KEYS,TYPESENSE_API_KEY,LIVEKIT_API_KEY,LIVEKIT_API_SECRET,S3_ACCESS_KEY,S3_SECRET_KEY,AI_API_KEY
+          envs: APP_DIR,DOCKER_IMAGE,DEPLOY_SHA,APP_DOMAIN,GHCR_USERNAME,GHCR_TOKEN,LIVEKIT_URL,JWT_SECRET_KEY,REFRESH_TOKEN_SECRET_KEY,MESSAGE_CURSOR_SECRET_KEY,MESSAGE_ENCRYPTION_ACTIVE_KEY_ID,MESSAGE_ENCRYPTION_KEYS,TYPESENSE_API_KEY,LIVEKIT_API_KEY,LIVEKIT_API_SECRET,S3_ACCESS_KEY,S3_SECRET_KEY,AI_API_KEY,MONGODB_IMAGE,DRAGONFLY_IMAGE,LIVEKIT_IMAGE,TYPESENSE_IMAGE,S3_IMAGE,PROMETHEUS_IMAGE,GRAFANA_IMAGE,CADDY_IMAGE,AI_BASE_URL,AI_SUMMARY_MODEL,AI_TRANSCRIPTION_MODEL,TRUSTED_PROXY_CIDRS
           script: |
-            cd /opt/avangard-chat
-            
-            required_env() {
-              local var_name=$1
-              local var_val=$2
-              if [ -z "$var_val" ]; then
-                echo "Missing required secret: ${var_name}" >&2
-                exit 1
-              fi
-            }
-            
-            # Ensure .env file exists and has correct image and livekit settings
-            if [ ! -f .env ]; then
-              echo "Creating initial .env file..."
-              echo "DOCKER_IMAGE=ghcr.io/${{ steps.repo_name.outputs.lowercase }}/app:latest" > .env
-              echo "LIVEKIT_URL=ws://${{ secrets.SSH_HOST }}:7880" >> .env
-            else
-              # Update image tag just in case
-              sed -i 's|^DOCKER_IMAGE=.*|DOCKER_IMAGE=ghcr.io/${{ steps.repo_name.outputs.lowercase }}/app:latest|' .env
-            fi
-            
-            # Function to safely write/update environment variables in .env
-            write_env_var() {
-              local var_name=$1
-              local var_val=$2
-              
-              # Check if secret is missing to prevent fallback to dev credentials
-              required_env "$var_name" "$var_val"
-              
-              # Escape $ as $$ for Docker Compose interpolation
-              var_val=$(echo "$var_val" | sed 's/\$/\$\$/g')
-              
-              if grep -q "^${var_name}=" .env; then
-                # Escape value for sed replacement
-                local escaped_val=$(echo "$var_val" | sed 's/[&/\]/\\&/g')
-                sed -i "s|^${var_name}=.*|${var_name}=${escaped_val}|" .env
-              else
-                echo "${var_name}=${var_val}" >> .env
-              fi
-            }
-
-            write_env_var "JWT_SECRET_KEY" "$JWT_SECRET_KEY"
-            write_env_var "REFRESH_TOKEN_SECRET_KEY" "$REFRESH_TOKEN_SECRET_KEY"
-            write_env_var "MESSAGE_CURSOR_SECRET_KEY" "$MESSAGE_CURSOR_SECRET_KEY"
-            write_env_var "MESSAGE_ENCRYPTION_ACTIVE_KEY_ID" "$MESSAGE_ENCRYPTION_ACTIVE_KEY_ID"
-            write_env_var "MESSAGE_ENCRYPTION_KEYS" "$MESSAGE_ENCRYPTION_KEYS"
-            write_env_var "TYPESENSE_API_KEY" "$TYPESENSE_API_KEY"
-            write_env_var "LIVEKIT_API_KEY" "$LIVEKIT_API_KEY"
-            write_env_var "LIVEKIT_API_SECRET" "$LIVEKIT_API_SECRET"
-            write_env_var "S3_ACCESS_KEY" "$S3_ACCESS_KEY"
-            write_env_var "S3_SECRET_KEY" "$S3_SECRET_KEY"
-            write_env_var "AI_API_KEY" "$AI_API_KEY"
-
-            # Authenticate to GHCR
-            echo "$GITHUB_TOKEN" | docker login ghcr.io -u ${{ github.actor }} --password-stdin
-
-            # Pull the new image and recreate containers
-            docker compose pull app
-            docker compose up -d
+            set -euo pipefail
+            cd "$APP_DIR"
+            chmod +x deploy/server-deploy.sh
+            ./deploy/server-deploy.sh
