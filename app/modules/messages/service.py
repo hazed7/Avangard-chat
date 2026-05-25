@@ -886,19 +886,26 @@ class MessageService:
         attachment_id: str,
         user_id: str,
     ) -> MessageResponse:
-        audio_attachment = await self.get_attachment(
-            message_id=message_id,
-            attachment_id=attachment_id,
-            user_id=user_id,
-        )
-
         message = await self._get_message_or_404(message_id)
+        if message.is_deleted:
+            raise HTTPException(status_code=422, detail="Message is deleted")
+        await self.room_service.get_for_user(linked_document_id(message.room), user_id)
+
         attachment = next(
             (item for item in message.attachments if item.id == attachment_id), None
         )
+        if not attachment:
+            raise HTTPException(status_code=404, detail="Attachment not found")
+
+        if attachment.transcription:
+            return self._serialize_message(message)
+
+        audio = await self.s3_service.download_file(
+            s3_settings.bucket_attachments, attachment.object_path
+        )
 
         transcription = await AIAssistService.transcript_voice_message(
-            audio=audio_attachment,
+            audio=audio,
             attachment=attachment,
         )
         attachment.transcription = transcription
