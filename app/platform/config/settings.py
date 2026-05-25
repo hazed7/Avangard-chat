@@ -266,7 +266,7 @@ class Settings(BaseSettings):
     summary_rate_limit_window_seconds: int = 60
     summary_rate_limit_max_attempts: int = 10
 
-    ai_transcription_model: str = "gpt-4o-transcribe"
+    ai_transcription_model: str = "whisper-1"
     subscription_self_activation_enabled: bool = False
 
     model_config = SettingsConfigDict(env_file=".env")
