@@ -45,6 +45,35 @@ async def get_me(
 
 
 @router.get(
+    "/search",
+    response_model=list[UserResponse],
+    responses=error_responses(401),
+)
+async def search_users(
+    q: str = Query(min_length=1, max_length=64),
+    limit: int = Query(20, ge=1, le=50),
+    current_user: dict = Depends(verify_token),
+    dragonfly: DragonflyService = Depends(get_dragonfly_service),
+):
+    del current_user
+    pattern = q.replace("%", r"\%").replace("_", r"\_")
+    regex = f".*{pattern}.*"
+    users = await (
+        User.find(
+            {
+                "$or": [
+                    {"username": {"$regex": regex, "$options": "i"}},
+                    {"full_name": {"$regex": regex, "$options": "i"}},
+                ],
+            }
+        )
+        .limit(limit)
+        .to_list()
+    )
+    return [await _serialize_user_with_presence(user, dragonfly) for user in users]
+
+
+@router.get(
     "/{user_id}",
     response_model=UserResponse,
     responses=error_responses(401, 404),
@@ -131,32 +160,3 @@ async def delete_avatar(
     )
     user.avatar = None
     await user.save()
-
-
-@router.get(
-    "/search",
-    response_model=list[UserResponse],
-    responses=error_responses(401),
-)
-async def search_users(
-    q: str = Query(min_length=1, max_length=64),
-    limit: int = Query(20, ge=1, le=50),
-    current_user: dict = Depends(verify_token),
-    dragonfly: DragonflyService = Depends(get_dragonfly_service),
-):
-    del current_user
-    pattern = q.replace("%", r"\%").replace("_", r"\_")
-    regex = f".*{pattern}.*"
-    users = await (
-        User.find(
-            {
-                "$or": [
-                    {"username": {"$regex": regex, "$options": "i"}},
-                    {"full_name": {"$regex": regex, "$options": "i"}},
-                ],
-            }
-        )
-        .limit(limit)
-        .to_list()
-    )
-    return [await _serialize_user_with_presence(user, dragonfly) for user in users]
