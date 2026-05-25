@@ -3,7 +3,7 @@ from typing import List, Optional
 
 from pydantic import BaseModel, ConfigDict, Field
 
-from app.modules.messages.model import Attachment, Message
+from app.modules.messages.model import Attachment, AttachmentKind, Message, MessageType
 from app.platform.persistence.links import (
     linked_document_id,
     optional_linked_document_id,
@@ -31,6 +31,8 @@ class AttachmentResponse(BaseModel):
     id: str
     name: str
     content_type: str
+    kind: AttachmentKind
+    duration_ms: int | None
     transcription: str | None
 
 
@@ -40,6 +42,7 @@ class MessageResponse(BaseModel):
     room_id: str
     sender_id: str
     text: str = Field(min_length=1, max_length=5000)
+    message_type: MessageType
     is_edited: bool
     edited_at: Optional[datetime] = None
     is_deleted: bool
@@ -78,6 +81,8 @@ def map_attachment(attachment: Attachment) -> AttachmentResponse:
         id=attachment.id,
         name=attachment.filename,
         content_type=attachment.content_type,
+        kind=attachment.kind,
+        duration_ms=attachment.duration_ms,
         transcription=attachment.transcription,
     )
 
@@ -89,6 +94,7 @@ def serialize_message_response(message: Message, *, text: str) -> MessageRespons
             "room_id": linked_document_id(message.room),
             "sender_id": linked_document_id(message.sender),
             "text": text,
+            "message_type": message.message_type,
             "is_edited": message.is_edited,
             "edited_at": message.edited_at,
             "is_deleted": message.is_deleted,

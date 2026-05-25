@@ -47,6 +47,8 @@ from app.platform.security.message_crypto import MessageCrypto
 
 logger = get_logger("audit")
 DELETED_MESSAGE_TEXT = "[deleted]"
+VOICE_MESSAGE_PLACEHOLDER = " "
+VOICE_MESSAGE_PREVIEW = "[Voice message]"
 MAX_MARK_ROOM_READ_EVENT_IDS = 1000
 CURSOR_AAD = b"message-cursor:v1"
 CURSOR_NONCE_BYTES = 12
@@ -148,6 +150,8 @@ class MessageService:
     ) -> MessageResponse:
         if message.is_deleted:
             decrypted_text = DELETED_MESSAGE_TEXT
+        elif message.message_type == "voice":
+            decrypted_text = VOICE_MESSAGE_PREVIEW
         else:
             decrypted_text = text if text is not None else self._decrypt_text(message)
         return serialize_message_response(message, text=decrypted_text)
@@ -266,6 +270,30 @@ class MessageService:
                 },
             },
         )
+
+    @staticmethod
+    def _is_audio_content_type(content_type: str | None) -> bool:
+        return isinstance(content_type, str) and content_type.startswith("audio/")
+
+    async def _build_room_preview(
+        self,
+        *,
+        room: ChatRoom,
+        sender_id: str,
+        text: str,
+        message_type: str,
+    ) -> str:
+        preview = (
+            VOICE_MESSAGE_PREVIEW
+            if message_type == "voice"
+            else text.replace("\n", " ")[:60]
+        )
+        if room.is_group:
+            sender = await User.find_one(User.id == sender_id)
+            if sender:
+                sender_display = sender.full_name or sender.username
+                preview = f"{sender_display}: {preview}"
+        return preview
 
     async def _index_message(self, message: Message, *, text: str) -> None:
         await self.typesense.upsert_message(
@@ -407,15 +435,19 @@ class MessageService:
             raise
 
     async def _send_encrypted(
-        self, message_encrypted: Message, room: ChatRoom, sender_id: str, text: str
+        self,
+        message_encrypted: Message,
+        room: ChatRoom,
+        sender_id: str,
+        text: str,
     ) -> MessageResponse:
         await message_encrypted.insert()
-        preview = text.replace("\n", " ")[:60]
-        if room.is_group:
-            sender = await User.find_one(User.id == sender_id)
-            if sender:
-                sender_display = sender.full_name or sender.username
-                preview = f"{sender_display}: {preview}"
+        preview = await self._build_room_preview(
+            room=room,
+            sender_id=sender_id,
+            text=text,
+            message_type=message_encrypted.message_type,
+        )
         await ChatRoom.get_motor_collection().update_one(
             {"_id": room.id},
             {
@@ -449,6 +481,8 @@ class MessageService:
                     filename=attachment.filename,
                     object_path=object_path,
                     content_type=attachment.content_type,
+                    kind=attachment.kind,
+                    duration_ms=attachment.duration_ms,
                     transcription=attachment.transcription,
                 )
             )
@@ -471,10 +505,79 @@ class MessageService:
             text_nonce=encrypted.nonce,
             text_key_id=encrypted.key_id,
             text_aad=encrypted.aad,
+            message_type="text",
             read_by=[sender],
             created_at=created_at,
         )
         return await self._send_encrypted(message, room, sender_id, data.text)
+
+    async def send_voice_message(
+        self,
+        *,
+        room_id: str,
+        duration_ms: int,
+        file: UploadFile,
+        sender_id: str,
+    ) -> MessageResponse:
+        if not self._is_audio_content_type(file.content_type):
+            raise HTTPException(
+                status_code=422,
+                detail="Voice message must be an audio file",
+            )
+
+        room = await self.room_service.get_for_user(room_id, sender_id)
+        sender = await self._get_user_or_404(sender_id)
+        upload_limit = get_attachment_upload_limit_bytes(file.content_type)
+        if (
+            upload_limit is not None
+            and file.size is not None
+            and file.size > upload_limit
+        ):
+            raise HTTPException(status_code=422, detail="File too large")
+
+        object_path = await self.s3_service.upload_message_attachment(
+            room_id=str(room.id),
+            file=file,
+        )
+        if not object_path:
+            raise HTTPException(
+                status_code=422,
+                detail="Voice message format not supported",
+            )
+
+        created_at = datetime.now(UTC)
+        encrypted = self._encrypt_text(
+            text=VOICE_MESSAGE_PLACEHOLDER,
+            room_id=str(room.id),
+            sender_id=sender.id,
+            created_at=created_at,
+        )
+        message = Message(
+            room=room,
+            sender=sender,
+            text_ciphertext=encrypted.ciphertext,
+            text_nonce=encrypted.nonce,
+            text_key_id=encrypted.key_id,
+            text_aad=encrypted.aad,
+            message_type="voice",
+            read_by=[sender],
+            created_at=created_at,
+            attachments=[
+                Attachment(
+                    filename=file.filename,
+                    object_path=object_path,
+                    content_type=file.content_type,
+                    kind="voice",
+                    duration_ms=duration_ms,
+                )
+            ],
+        )
+        return await self._send_encrypted(
+            message,
+            room,
+            sender_id,
+            VOICE_MESSAGE_PLACEHOLDER,
+        )
 
     async def get_history(
         self,
@@ -522,6 +625,11 @@ class MessageService:
             raise HTTPException(
                 status_code=400,
                 detail="Deleted messages cannot be edited",
+            )
+        if message.message_type == "voice":
+            raise HTTPException(
+                status_code=422,
+                detail="Voice messages cannot be edited",
             )
 
         previous_state = self._capture_edit_state(message)
@@ -789,6 +897,11 @@ class MessageService:
         await self._ensure_message_owner(message, user_id)
         if message.is_deleted:
             raise HTTPException(status_code=422, detail="Message is deleted")
+        if message.message_type == "voice":
+            raise HTTPException(
+                status_code=422,
+                detail="Voice messages cannot have extra attachments",
+            )
         upload_limit = get_attachment_upload_limit_bytes(file.content_type)
         if (
             upload_limit is not None
@@ -809,6 +922,7 @@ class MessageService:
                 filename=file.filename,
                 object_path=object_path,
                 content_type=file.content_type,
+                kind="file",
             )
         )
         await message.save()
@@ -866,6 +980,7 @@ class MessageService:
                 text_nonce=encrypted.nonce,
                 text_key_id=encrypted.key_id,
                 text_aad=encrypted.aad,
+                message_type=message.message_type,
                 read_by=[sender],
                 created_at=created_at,
                 attachments=await self._copy_attachments(
@@ -913,6 +1028,11 @@ class MessageService:
         )
         if not attachment:
             raise HTTPException(status_code=404, detail="Attachment not found")
+        if not self._is_audio_content_type(attachment.content_type):
+            raise HTTPException(
+                status_code=422,
+                detail="Only audio attachments can be transcribed",
+            )
 
         if attachment.transcription:
             return self._serialize_message(message)
