@@ -1,7 +1,6 @@
 port: 7880
 
-keys:
-  devkey: secret
+
 
 rtc:
   tcp_port: 7881
