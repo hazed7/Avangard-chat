@@ -153,6 +153,8 @@ class OpenAISettings(BaseModel):
     base_url: str
     api_key: str
     summary_model: str
+    transcription_base_url: str
+    transcription_api_key: str
     transcription_model: str
     summary_max_messages: int
     summary_max_chars_per_message: int
@@ -268,6 +270,8 @@ class Settings(BaseSettings):
     summary_rate_limit_max_attempts: int = 10
 
     ai_transcription_model: str = "whisper-large-v3-turbo"
+    ai_transcription_base_url: str = "https://api.groq.com/openai/v1"
+    ai_transcription_api_key: str = ""
     subscription_self_activation_enabled: bool = False
 
     model_config = SettingsConfigDict(env_file=".env")
@@ -486,6 +490,8 @@ class Settings(BaseSettings):
             base_url=self.ai_base_url,
             api_key=self.ai_api_key,
             summary_model=self.ai_summary_model,
+            transcription_base_url=self.ai_transcription_base_url,
+            transcription_api_key=self.ai_transcription_api_key,
             transcription_model=self.ai_transcription_model,
             summary_max_messages=self.ai_summary_max_messages,
             summary_max_chars_per_message=self.ai_summary_max_chars_per_message,
