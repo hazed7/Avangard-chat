@@ -2,7 +2,7 @@
 name = "avangard-chat"
 version = "0.1.0"
 description = "Avangard chat backend"
-requires-python = ">=3.12"
+requires-python = ">=3.11"
 dependencies = [
   "argon2-cffi==23.1.0",
   "beanie==1.26.0",
