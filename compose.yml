@@ -53,7 +53,7 @@ services:
     container_name: mongo
     image: mongo:7
     ports:
-      - "27017:27017"
+      - "127.0.0.1:27017:27017"
     volumes:
       - mongo_data:/data/db
     healthcheck:
@@ -76,7 +76,7 @@ services:
     container_name: dragonfly
     image: docker.dragonflydb.io/dragonflydb/dragonfly:v1.27.1
     ports:
-      - "6379:6379"
+      - "127.0.0.1:6379:6379"
     healthcheck:
       test: ["CMD", "redis-cli", "ping"]
       interval: 5s
@@ -104,7 +104,7 @@ services:
     image: typesense/typesense:27.1
     command: "--data-dir=/data --api-key=${TYPESENSE_API_KEY:-dev-typesense-key} --enable-cors"
     ports:
-      - "8108:8108"
+      - "127.0.0.1:8108:8108"
     volumes:
       - typesense_data:/data
     restart: unless-stopped
@@ -114,7 +114,7 @@ services:
     container_name: rustfs
     restart: unless-stopped
     ports:
-      - "9000:9000"
+      - "127.0.0.1:9000:9000"
     environment:
       RUSTFS_ACCESS_KEY: ${S3_ACCESS_KEY:-s3_admin}
       RUSTFS_SECRET_KEY: ${S3_SECRET_KEY:-s3_admin}
@@ -133,7 +133,7 @@ services:
     volumes:
       - ./prometheus.yml:/etc/prometheus/prometheus.yml
     ports:
-      - "9090:9090"
+      - "127.0.0.1:9090:9090"
     extra_hosts:
       - "host.docker.internal:host-gateway"
 
@@ -141,7 +141,7 @@ services:
     image: grafana/grafana:latest
     container_name: avangard_grafana
     ports:
-      - "3000:3000"
+      - "127.0.0.1:3000:3000"
     depends_on:
       - prometheus
 
