@@ -53,7 +53,7 @@ services:
 
   mongodb:
     container_name: mongo
-    image: mongo:7
+    image: mongo:4.4.29
     ports:
       - "127.0.0.1:27017:27017"
     volumes:
@@ -62,7 +62,7 @@ services:
       test:
         [
           "CMD",
-          "mongosh",
+          "mongo",
           "--quiet",
           "mongodb://localhost:27017/admin",
           "--eval",
