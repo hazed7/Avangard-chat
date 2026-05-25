@@ -99,13 +99,42 @@ class AIAssistService:
         try:
             audio_bytes = await audio.read()
             transcription = await _client.audio.transcriptions.create(
-                model=settings.ai_transcription_model,
+                model=settings.ai.transcription_model,
                 file=(attachment.filename, audio_bytes),
             )
             return transcription.text
-        except Exception:
-            logger.error(
-                f"Couldn't transcribe audio file {attachment.id}",
-                exc_info=True,
-            )
-            raise HTTPException(status_code=422, detail="Audio can't be transcribed")
+        except openai.APITimeoutError as exc:
+            raise HTTPException(
+                status_code=504,
+                detail="Transcription timed out, please try again",
+            ) from exc
+        except openai.APIConnectionError as exc:
+            raise HTTPException(
+                status_code=502,
+                detail="Could not reach transcription service",
+            ) from exc
+        except openai.RateLimitError as exc:
+            raise HTTPException(
+                status_code=503,
+                detail="Transcription service is temporarily unavailable",
+            ) from exc
+        except openai.InternalServerError as exc:
+            raise HTTPException(
+                status_code=502,
+                detail="Transcription service returned an error",
+            ) from exc
+        except openai.BadRequestError as exc:
+            raise HTTPException(
+                status_code=400,
+                detail="Transcription bad request",
+            ) from exc
+        except openai.AuthenticationError as exc:
+            raise HTTPException(
+                status_code=403,
+                detail="Transcription service forbidden",
+            ) from exc
+        except openai.APIStatusError as exc:
+            raise HTTPException(
+                status_code=exc.status_code,
+                detail=exc.message,
+            ) from exc
