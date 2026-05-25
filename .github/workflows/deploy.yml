@@ -67,10 +67,23 @@ jobs:
 
       - name: Execute deployment commands via SSH
         uses: appleboy/ssh-action@v1.0.3
+        env:
+          JWT_SECRET_KEY: ${{ secrets.JWT_SECRET_KEY }}
+          REFRESH_TOKEN_SECRET_KEY: ${{ secrets.REFRESH_TOKEN_SECRET_KEY }}
+          MESSAGE_CURSOR_SECRET_KEY: ${{ secrets.MESSAGE_CURSOR_SECRET_KEY }}
+          MESSAGE_ENCRYPTION_ACTIVE_KEY_ID: ${{ secrets.MESSAGE_ENCRYPTION_ACTIVE_KEY_ID }}
+          MESSAGE_ENCRYPTION_KEYS: ${{ secrets.MESSAGE_ENCRYPTION_KEYS }}
+          TYPESENSE_API_KEY: ${{ secrets.TYPESENSE_API_KEY }}
+          LIVEKIT_API_KEY: ${{ secrets.LIVEKIT_API_KEY }}
+          LIVEKIT_API_SECRET: ${{ secrets.LIVEKIT_API_SECRET }}
+          S3_ACCESS_KEY: ${{ secrets.S3_ACCESS_KEY }}
+          S3_SECRET_KEY: ${{ secrets.S3_SECRET_KEY }}
+          AI_API_KEY: ${{ secrets.AI_API_KEY }}
         with:
           host: ${{ secrets.SSH_HOST }}
           username: ${{ secrets.SSH_USER }}
           key: ${{ secrets.SSH_PRIVATE_KEY }}
+          envs: JWT_SECRET_KEY,REFRESH_TOKEN_SECRET_KEY,MESSAGE_CURSOR_SECRET_KEY,MESSAGE_ENCRYPTION_ACTIVE_KEY_ID,MESSAGE_ENCRYPTION_KEYS,TYPESENSE_API_KEY,LIVEKIT_API_KEY,LIVEKIT_API_SECRET,S3_ACCESS_KEY,S3_SECRET_KEY,AI_API_KEY
           script: |
             cd /opt/avangard-chat
             
@@ -84,6 +97,33 @@ jobs:
               sed -i 's|^DOCKER_IMAGE=.*|DOCKER_IMAGE=ghcr.io/${{ steps.repo_name.outputs.lowercase }}/app:latest|' .env
             fi
             
+            # Function to safely write/update environment variables in .env
+            write_env_var() {
+              local var_name=$1
+              local var_val=$2
+              if [ -n "$var_val" ]; then
+                if grep -q "^${var_name}=" .env; then
+                  # Escape value for sed replacement
+                  local escaped_val=$(echo "$var_val" | sed 's/[&/\]/\\&/g')
+                  sed -i "s|^${var_name}=.*|${var_name}=${escaped_val}|" .env
+                else
+                  echo "${var_name}=${var_val}" >> .env
+                fi
+              fi
+            }
+
+            write_env_var "JWT_SECRET_KEY" "$JWT_SECRET_KEY"
+            write_env_var "REFRESH_TOKEN_SECRET_KEY" "$REFRESH_TOKEN_SECRET_KEY"
+            write_env_var "MESSAGE_CURSOR_SECRET_KEY" "$MESSAGE_CURSOR_SECRET_KEY"
+            write_env_var "MESSAGE_ENCRYPTION_ACTIVE_KEY_ID" "$MESSAGE_ENCRYPTION_ACTIVE_KEY_ID"
+            write_env_var "MESSAGE_ENCRYPTION_KEYS" "$MESSAGE_ENCRYPTION_KEYS"
+            write_env_var "TYPESENSE_API_KEY" "$TYPESENSE_API_KEY"
+            write_env_var "LIVEKIT_API_KEY" "$LIVEKIT_API_KEY"
+            write_env_var "LIVEKIT_API_SECRET" "$LIVEKIT_API_SECRET"
+            write_env_var "S3_ACCESS_KEY" "$S3_ACCESS_KEY"
+            write_env_var "S3_SECRET_KEY" "$S3_SECRET_KEY"
+            write_env_var "AI_API_KEY" "$AI_API_KEY"
+
             # Pull the new image and recreate containers
             docker compose pull app
             docker compose down app

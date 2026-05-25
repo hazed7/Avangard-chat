@@ -19,7 +19,7 @@ services:
       - REFRESH_TOKEN_SECRET_KEY=${REFRESH_TOKEN_SECRET_KEY:-change-me-refresh-secret}
       - MESSAGE_CURSOR_SECRET_KEY=${MESSAGE_CURSOR_SECRET_KEY:-change-me-message-cursor-secret}
       - MESSAGE_ENCRYPTION_ACTIVE_KEY_ID=${MESSAGE_ENCRYPTION_ACTIVE_KEY_ID:-v1}
-      - MESSAGE_ENCRYPTION_KEYS=${MESSAGE_ENCRYPTION_KEYS:-{"v1":"MDEyMzQ1Njc4OWFiY2RlZjAxMjM0NTY3ODlhYmNkZWY="}}
+      - 'MESSAGE_ENCRYPTION_KEYS=${MESSAGE_ENCRYPTION_KEYS:-{"v1":"MDEyMzQ1Njc4OWFiY2RlZjAxMjM0NTY3ODlhYmNkZWY="}}'
       - S3_URL=s3:9000
       - S3_ACCESS_KEY=${S3_ACCESS_KEY:-s3_admin}
       - S3_SECRET_KEY=${S3_SECRET_KEY:-s3_admin}
@@ -102,7 +102,7 @@ services:
   typesense:
     container_name: typesense
     image: typesense/typesense:27.1
-    command: "--data-dir=/data --api-key=dev-typesense-key --enable-cors"
+    command: "--data-dir=/data --api-key=${TYPESENSE_API_KEY:-dev-typesense-key} --enable-cors"
     ports:
       - "8108:8108"
     volumes:
@@ -116,8 +116,8 @@ services:
     ports:
       - "9000:9000"
     environment:
-      RUSTFS_ACCESS_KEY: s3_admin
-      RUSTFS_SECRET_KEY: s3_admin
+      RUSTFS_ACCESS_KEY: ${S3_ACCESS_KEY:-s3_admin}
+      RUSTFS_SECRET_KEY: ${S3_SECRET_KEY:-s3_admin}
     volumes:
       - rustfs_data:/data
     healthcheck:
