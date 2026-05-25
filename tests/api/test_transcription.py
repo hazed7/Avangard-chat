@@ -4,6 +4,7 @@ import openai
 import pytest
 from fastapi.testclient import TestClient
 
+from app.modules.subscriptions.dependencies import get_subscription_service
 from tests.helpers.auth import register_user
 from tests.helpers.chat import (
     create_dm,
@@ -19,7 +20,17 @@ TRANSCRIPTIONS_CREATE = (
 
 
 @pytest.fixture
-def mock_transcription_create():
+def mock_subscriptions(client: TestClient):
+    mock_service = AsyncMock()
+    mock_service.get_user_features = AsyncMock(return_value=["transcription"])
+
+    client.app.dependency_overrides[get_subscription_service] = lambda: mock_service
+    yield mock_service
+    client.app.dependency_overrides.pop(get_subscription_service, None)
+
+
+@pytest.fixture
+def mock_transcription_create(mock_subscriptions):
     mock_result = MagicMock()
     mock_result.text = "Hey, transcribe it"
 
@@ -103,7 +114,7 @@ def test_transcription_idempotency(client: TestClient, mock_transcription_create
     assert mock_transcription_create.call_count == 1
 
 
-def test_transcribe_audio_message_deleted(client: TestClient):
+def test_transcribe_audio_message_deleted(client: TestClient, mock_subscriptions):
     alice = register_user(client, "dm-alice")
     bob = register_user(client, "dm-bob")
 
@@ -140,7 +151,7 @@ def test_transcribe_audio_message_deleted(client: TestClient):
     assert response.status_code == 422
 
 
-def test_transcribe_audio_no_message(client: TestClient):
+def test_transcribe_audio_no_message(client: TestClient, mock_subscriptions):
     alice = register_user(client, "dm-alice")
     bob = register_user(client, "dm-bob")
 
@@ -156,7 +167,7 @@ def test_transcribe_audio_no_message(client: TestClient):
     assert response.status_code == 404
 
 
-def test_transcribe_audio_no_attachment(client: TestClient):
+def test_transcribe_audio_no_attachment(client: TestClient, mock_subscriptions):
     alice = register_user(client, "dm-alice")
     bob = register_user(client, "dm-bob")
 
@@ -180,7 +191,7 @@ def test_transcribe_audio_no_attachment(client: TestClient):
 
 
 @pytest.fixture
-def mock_transcription_create_error():
+def mock_transcription_create_error(mock_subscriptions):
     async def raise_error(*args, **kwargs):
         raise openai.APIStatusError(
             message="OpenAI error",
@@ -212,3 +223,22 @@ def test_transcription_openai_error(
     )
 
     assert response.status_code == 500
+
+
+def test_transcription_no_subscription(client: TestClient):
+    alice = register_user(client, "dm-alice")
+    bob = register_user(client, "dm-bob")
+    room = create_dm(client, alice["access_token"], bob["user"]["id"])
+    message = create_message(client, alice["access_token"], room["id"], text=" ")
+    message_with_attachment = upload_attachment(
+        client, alice["access_token"], message["id"], "audio_message.mp3", "audio/mpeg"
+    ).json()
+
+    response = transcribe_audio(
+        client,
+        alice["access_token"],
+        message["id"],
+        message_with_attachment["attachments"][0]["id"],
+    )
+
+    assert response.status_code == 403
