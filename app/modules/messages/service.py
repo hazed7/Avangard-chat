@@ -282,12 +282,17 @@ class MessageService:
         sender_id: str,
         text: str,
         message_type: str,
+        duration_ms: int | None = None,
     ) -> str:
-        preview = (
-            VOICE_MESSAGE_PREVIEW
-            if message_type == "voice"
-            else text.replace("\n", " ")[:60]
-        )
+        if message_type == "voice":
+            d = duration_ms or 0
+            s = d // 1000
+            m = s // 60
+            sec = s % 60
+            dur = f"{m}:{sec:02d}"
+            preview = f"голосовое  ●  {dur}"
+        else:
+            preview = text.replace("\n", " ")[:60]
         if room.is_group:
             sender = await User.find_one(User.id == sender_id)
             if sender:
@@ -447,6 +452,9 @@ class MessageService:
             sender_id=sender_id,
             text=text,
             message_type=message_encrypted.message_type,
+            duration_ms=message_encrypted.attachments[0].duration_ms
+            if message_encrypted.attachments
+            else None,
         )
         await ChatRoom.get_motor_collection().update_one(
             {"_id": room.id},
