@@ -79,8 +79,18 @@ ATTACHMENT_UPLOAD_LIMIT_ATTRIBUTES = {
 }
 
 
+def _match_content_type(content_type: str | None) -> str | None:
+    if not content_type:
+        return None
+    direct = CONTENT_TYPE_PREFIX_ATTACHMENTS.get(content_type)
+    if direct:
+        return direct
+    base = content_type.split(";")[0].strip()
+    return CONTENT_TYPE_PREFIX_ATTACHMENTS.get(base)
+
+
 def get_attachment_upload_limit_bytes(content_type: str | None) -> int | None:
-    prefix = CONTENT_TYPE_PREFIX_ATTACHMENTS.get(content_type)
+    prefix = _match_content_type(content_type)
     limit_attribute = ATTACHMENT_UPLOAD_LIMIT_ATTRIBUTES.get(prefix)
     if not limit_attribute:
         return None
@@ -122,7 +132,7 @@ class S3Service:
         room_id: str,
         file: UploadFile,
     ) -> str | None:
-        prefix = CONTENT_TYPE_PREFIX_ATTACHMENTS.get(file.content_type)
+        prefix = _match_content_type(file.content_type)
         if not prefix:
             return None
         object_name = f"{prefix}/{room_id}/{uuid.uuid4()}"
@@ -138,7 +148,7 @@ class S3Service:
         room_id_target: str,
         content_type: str,
     ) -> str:
-        prefix = CONTENT_TYPE_PREFIX_ATTACHMENTS.get(content_type)
+        prefix = _match_content_type(content_type)
         object_name_target = f"{prefix}/{room_id_target}/{uuid.uuid4()}"
         await self.s3_client.copy_object(
             bucket_name=settings.s3_bucket_attachments,
