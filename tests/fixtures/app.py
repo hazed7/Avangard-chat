@@ -13,6 +13,7 @@ from app.modules.calls.model import CallSession
 from app.modules.messages.model import Message
 from app.modules.messages.unread.model import RoomUnreadCounter
 from app.modules.rooms.model import ChatRoom
+from app.modules.subscriptions.models import UserSubscription
 from app.modules.system.cleanup_jobs.model import CleanupJob
 from app.modules.users.model import User
 from app.modules.ws.manager import manager
@@ -166,6 +167,7 @@ def client(monkeypatch: pytest.MonkeyPatch) -> TestClient:
                 RoomUnreadCounter,
                 CleanupJob,
                 CallSession,
+                UserSubscription,
             ],
         )
 
