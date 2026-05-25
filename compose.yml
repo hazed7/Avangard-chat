@@ -2,7 +2,7 @@ services:
   app:
     container_name: avangard
     build: .
-    image: "avangard:latest"
+#    image: "avangard:latest"
     ports:
       - "8000:8000"
     environment:

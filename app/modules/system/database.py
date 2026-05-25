@@ -10,10 +10,11 @@ from app.modules.users.model import User
 from app.platform.config.settings import settings
 
 
-async def init_db() -> None:
+async def init_db(app=None) -> None:
     client = AsyncIOMotorClient(settings.database.mongodb_url)
+    database = client[settings.database.db_name]
     await init_beanie(
-        database=client[settings.database.db_name],
+        database=database,
         document_models=[
             User,
             Message,
@@ -23,3 +24,6 @@ async def init_db() -> None:
             CallSession,
         ],
     )
+    # Сохраняем базу в app.state для использования в зависимостях
+    if app is not None:
+        app.state.db = database

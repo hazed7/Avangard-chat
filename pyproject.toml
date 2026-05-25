@@ -24,6 +24,7 @@ dependencies = [
   "websockets==13.0",
   "openai==2.36.0",
   "prometheus-fastapi-instrumentator>=7.1.0",
+  "stripe>=7.0.0"
 ]
 
 [dependency-groups]

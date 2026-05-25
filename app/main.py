@@ -10,6 +10,7 @@ from app.modules.calls import router as calls
 from app.modules.messages import router as messages
 from app.modules.messages.unread.worker import UnreadCounterReconciliationWorker
 from app.modules.rooms import router as rooms
+from app.modules.subscriptions import subscriptions_router
 from app.modules.summary import router as summary
 from app.modules.system import health_router as health
 from app.modules.system.cleanup_jobs.worker import CleanupJobWorker
@@ -46,7 +47,7 @@ async def lifespan(app: FastAPI):
     await livekit.startup()
     await typesense.startup()
     try:
-        await init_db()
+        await init_db(app)
         await s3_service.init_s3()
         await manager.startup()
         await cleanup_job_worker.startup()
@@ -77,6 +78,7 @@ app.include_router(messages.router, prefix="/message", tags=["Messages"])
 app.include_router(ws.router, prefix="/ws", tags=["WebSockets"])
 app.include_router(summary.router, prefix="/summary", tags=["Summary"])
 app.include_router(ai_assist.router, prefix="/ai_assist", tags=["AiAssist"])
+app.include_router(subscriptions_router)
 
 
 def custom_openapi():
