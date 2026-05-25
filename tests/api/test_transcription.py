@@ -13,7 +13,7 @@ from tests.helpers.chat import (
 )
 
 
-@pytest.fixture(autouse=True)
+@pytest.fixture
 def mock_openai_client():
     async def mock_transcription(*args, **kwargs):
         mock = MagicMock()
@@ -25,7 +25,7 @@ def mock_openai_client():
         yield mock_client
 
 
-def test_transcription_successful(client: TestClient):
+def test_transcription_successful(client: TestClient, mock_openai_client):
     alice = register_user(client, "dm-alice")
     bob = register_user(client, "dm-bob")
 
@@ -134,3 +134,33 @@ def test_transcribe_audio_no_attachment(client: TestClient):
     )
 
     assert response.status_code == 404
+
+
+@pytest.fixture
+def mock_openai_client_error():
+    async def mock_transcription(*args, **kwargs):
+        raise Exception("OpenAI error")
+
+    with patch("app.modules.ai_assist.service._client") as mock_client:
+        mock_client.audio.transcriptions.create = mock_transcription
+        yield mock_client
+
+
+def test_transcription_openai_error(client: TestClient, mock_openai_client_error):
+    alice = register_user(client, "dm-alice")
+    bob = register_user(client, "dm-bob")
+    room = create_dm(client, alice["access_token"], bob["user"]["id"])
+    message = create_message(client, alice["access_token"], room["id"], text=" ")
+    message_with_attachment = upload_attachment(
+        client, alice["access_token"], message["id"], "audio_message.mp3", "audio/mpeg"
+    ).json()
+
+    response = transcribe_audio(
+        client,
+        alice["access_token"],
+        message["id"],
+        message_with_attachment["attachments"][0]["id"],
+    )
+
+    assert response.status_code == 422
+    assert response.json()["detail"] == "Audio can't be transcribed"

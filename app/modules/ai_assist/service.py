@@ -103,8 +103,6 @@ class AIAssistService:
                 file=(attachment.filename, audio_bytes),
             )
             return transcription.text
-        except HTTPException:
-            raise
         except Exception:
             logger.error(
                 f"Couldn't transcribe audio file {attachment.id}",
