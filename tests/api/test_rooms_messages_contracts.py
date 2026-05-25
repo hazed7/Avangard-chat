@@ -29,6 +29,7 @@ def test_rooms_and_messages_contract_shapes(client: TestClient):
             "created_by_id",
             "created_at",
             "last_message_at",
+            "last_message_preview",
         },
     )
 
@@ -49,6 +50,7 @@ def test_rooms_and_messages_contract_shapes(client: TestClient):
             "created_by_id",
             "created_at",
             "last_message_at",
+            "last_message_preview",
         },
     )
 
@@ -67,6 +69,7 @@ def test_rooms_and_messages_contract_shapes(client: TestClient):
             "created_by_id",
             "created_at",
             "last_message_at",
+            "last_message_preview",
         },
     )
 
@@ -86,6 +89,7 @@ def test_rooms_and_messages_contract_shapes(client: TestClient):
             "created_by_id",
             "created_at",
             "last_message_at",
+            "last_message_preview",
         },
     )
 
@@ -104,6 +108,7 @@ def test_rooms_and_messages_contract_shapes(client: TestClient):
             "created_by_id",
             "created_at",
             "last_message_at",
+            "last_message_preview",
         },
     )
 
@@ -124,6 +129,7 @@ def test_rooms_and_messages_contract_shapes(client: TestClient):
             "created_by_id",
             "created_at",
             "last_message_at",
+            "last_message_preview",
         }
         for room in list_payload["groups"] + list_payload["dms"]
     )
