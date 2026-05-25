@@ -44,8 +44,10 @@ CONTENT_TYPE_PREFIX_ATTACHMENTS = {
     # audio
     "audio/mpeg": s3_settings.folder_audio,
     "audio/ogg": s3_settings.folder_audio,
+    "audio/ogg;codecs=opus": s3_settings.folder_audio,
     "audio/wav": s3_settings.folder_audio,
     "audio/webm": s3_settings.folder_audio,
+    "audio/webm;codecs=opus": s3_settings.folder_audio,
     "audio/aac": s3_settings.folder_audio,
     "audio/x-m4a": s3_settings.folder_audio,
     # documents
