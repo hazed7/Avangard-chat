@@ -4,7 +4,6 @@ from typing import Optional
 from fastapi import Depends, HTTPException
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from jwt import InvalidTokenError
-from openai import AsyncOpenAI
 
 from app.modules.auth.service import AuthService
 from app.modules.calls.service import CallService
@@ -12,7 +11,6 @@ from app.modules.messages.service import MessageService
 from app.modules.messages.unread.service import UnreadCounterService
 from app.modules.rooms.service import RoomService
 from app.modules.system.cleanup_jobs.service import CleanupJobService
-from app.modules.transcription.service import TranscriptionService
 from app.modules.users.model import User
 from app.platform.backends.dragonfly.container import get_dragonfly_service_singleton
 from app.platform.backends.dragonfly.rate_limit import RateLimitService
@@ -148,20 +146,6 @@ def get_s3_service() -> S3Service:
     return get_s3_service_singleton()
 
 
-def get_open_ai_service() -> AsyncOpenAI:
-    return AsyncOpenAI(
-        api_key=settings.ai.api_key,
-        base_url=settings.ai.base_url,
-        timeout=30.0,
-    )
-
-
-def get_transcription_service() -> TranscriptionService:
-    return TranscriptionService(
-        open_ai_service=get_open_ai_service(),
-    )
-
-
 def get_message_service(
     room_service: RoomService = Depends(get_room_service),
     dragonfly: DragonflyService = Depends(get_dragonfly_service),
@@ -170,7 +154,6 @@ def get_message_service(
     unread_counters: UnreadCounterService = Depends(get_unread_counter_service),
     cleanup_jobs: CleanupJobService = Depends(get_cleanup_job_service),
     s3_service: S3Service = Depends(get_s3_service),
-    transcription_service: TranscriptionService = Depends(get_transcription_service),
 ) -> MessageService:
     return MessageService(
         room_service=room_service,
@@ -180,7 +163,6 @@ def get_message_service(
         unread_counters=unread_counters,
         cleanup_jobs=cleanup_jobs,
         s3_service=s3_service,
-        transcription_service=transcription_service,
     )
 
 

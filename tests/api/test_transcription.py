@@ -1,3 +1,6 @@
+from unittest.mock import MagicMock, patch
+
+import pytest
 from fastapi.testclient import TestClient
 
 from tests.helpers.auth import register_user
@@ -8,6 +11,18 @@ from tests.helpers.chat import (
     transcribe_audio,
     upload_attachment,
 )
+
+
+@pytest.fixture(autouse=True)
+def mock_openai_client():
+    async def mock_transcription(*args, **kwargs):
+        mock = MagicMock()
+        mock.text = "Hey, transcribe it"
+        return mock
+
+    with patch("app.modules.ai_assist.service._client") as mock_client:
+        mock_client.audio.transcriptions.create = mock_transcription
+        yield mock_client
 
 
 def test_transcription_successful(client: TestClient):
@@ -40,8 +55,6 @@ def test_transcription_successful(client: TestClient):
 
     assert response.status_code == 200
     response_json = response.json()
-
-    print(response_json)
 
     assert response_json["attachments"][0]["transcription"] == "Hey, transcribe it"
     assert response_json["id"] == message["id"]

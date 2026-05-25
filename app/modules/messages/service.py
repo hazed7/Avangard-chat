@@ -15,6 +15,7 @@ from cryptography.hazmat.primitives.ciphers.aead import AESGCM
 from fastapi import HTTPException, UploadFile
 from pymongo.errors import PyMongoError
 
+from app.modules.ai_assist.service import AIAssistService
 from app.modules.messages.model import Attachment, Message
 from app.modules.messages.schemas import (
     MarkRoomReadResponse,
@@ -31,7 +32,6 @@ from app.modules.messages.unread.service import UnreadCounterService
 from app.modules.rooms.model import ChatRoom
 from app.modules.rooms.service import RoomService
 from app.modules.system.cleanup_jobs.service import CleanupJobService
-from app.modules.transcription.service import TranscriptionService
 from app.modules.users.model import User
 from app.platform.backends.dragonfly.service import DragonflyService
 from app.platform.backends.s3.service import (
@@ -71,7 +71,6 @@ class MessageService:
         unread_counters: UnreadCounterService,
         cleanup_jobs: CleanupJobService,
         s3_service: S3Service,
-        transcription_service: TranscriptionService,
     ):
         self.room_service = room_service
         self.dragonfly = dragonfly
@@ -80,7 +79,6 @@ class MessageService:
         self.unread_counters = unread_counters
         self.cleanup_jobs = cleanup_jobs
         self.s3_service = s3_service
-        self.transcription_service = transcription_service
 
     async def _get_room_or_404(self, room_id: str) -> ChatRoom:
         room = await ChatRoom.get(room_id)
@@ -899,7 +897,7 @@ class MessageService:
             (item for item in message.attachments if item.id == attachment_id), None
         )
 
-        transcription = await self.transcription_service.transcript_voice_message(
+        transcription = await AIAssistService.transcript_voice_message(
             audio=audio_attachment,
             attachment=attachment,
         )

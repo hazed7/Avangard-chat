@@ -207,18 +207,6 @@ def client(monkeypatch: pytest.MonkeyPatch) -> TestClient:
         lambda: s3_mock,
     )
 
-    async def mock_transcription(*args, **kwargs):
-        mock = MagicMock()
-        mock.text = "Hey, transcribe it"
-        return mock
-
-    open_ai_mock = AsyncMock()
-    open_ai_mock.audio.transcriptions.create = mock_transcription
-    monkeypatch.setattr(
-        "app.modules.system.dependencies.get_open_ai_service",
-        lambda: open_ai_mock,
-    )
-
     with TestClient(app) as test_client:
         yield test_client
     asyncio.run(_clear_dragonfly_keys())

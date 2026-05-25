@@ -1,10 +1,13 @@
 import openai
+from aiohttp import ClientResponse
 from fastapi import HTTPException
 from openai import AsyncOpenAI
 
 from app.modules.ai_assist.enums import STYLE_PROMPTS, RewriteStyle
 from app.modules.ai_assist.schemas import RewriteResponse
+from app.modules.messages.model import Attachment
 from app.platform.config.settings import settings
+from app.platform.observability.logger import get_logger
 
 _client = AsyncOpenAI(
     api_key=settings.ai.api_key,
@@ -20,6 +23,8 @@ SYSTEM_PROMPT = (
 )
 
 MAX_INPUT_CHARS = 1000
+
+logger = get_logger("audit")
 
 
 class AIAssistService:
@@ -86,3 +91,23 @@ class AIAssistService:
             rewritten=rewritten,
             style=style,
         )
+
+    @staticmethod
+    async def transcript_voice_message(
+        audio: ClientResponse, attachment: Attachment
+    ) -> str:
+        try:
+            audio_bytes = await audio.read()
+            transcription = await _client.audio.transcriptions.create(
+                model=settings.ai_transcription_model,
+                file=(attachment.filename, audio_bytes),
+            )
+            return transcription.text
+        except HTTPException:
+            raise
+        except Exception:
+            logger.error(
+                f"Couldn't transcribe audio file {attachment.id}",
+                exc_info=True,
+            )
+            raise HTTPException(status_code=422, detail="Audio can't be transcribed")
