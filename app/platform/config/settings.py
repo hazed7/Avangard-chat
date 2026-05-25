@@ -266,6 +266,8 @@ class Settings(BaseSettings):
     summary_rate_limit_window_seconds: int = 60
     summary_rate_limit_max_attempts: int = 10
 
+    ai_transcription_model: str = "gpt-4o-transcribe"
+
     model_config = SettingsConfigDict(env_file=".env")
 
     @field_validator("trusted_proxy_cidrs", mode="before")

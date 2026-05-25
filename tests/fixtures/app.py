@@ -196,6 +196,7 @@ def client(monkeypatch: pytest.MonkeyPatch) -> TestClient:
         response = MagicMock()
         response.headers = {"content-type": "text/plain"}
         response.content = gen()
+        response.read = AsyncMock(return_value=b"fake content")
         response.close = AsyncMock()
         return response
 
@@ -204,6 +205,18 @@ def client(monkeypatch: pytest.MonkeyPatch) -> TestClient:
     monkeypatch.setattr(
         "app.platform.backends.s3.container.get_s3_client_singleton",
         lambda: s3_mock,
+    )
+
+    async def mock_transcription(*args, **kwargs):
+        mock = MagicMock()
+        mock.text = "Hey, transcribe it"
+        return mock
+
+    open_ai_mock = AsyncMock()
+    open_ai_mock.audio.transcriptions.create = mock_transcription
+    monkeypatch.setattr(
+        "app.modules.system.dependencies.get_open_ai_service",
+        lambda: open_ai_mock,
     )
 
     with TestClient(app) as test_client:

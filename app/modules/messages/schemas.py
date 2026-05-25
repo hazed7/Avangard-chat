@@ -31,6 +31,7 @@ class AttachmentResponse(BaseModel):
     id: str
     name: str
     content_type: str
+    transcription: str | None
 
 
 class MessageResponse(BaseModel):
@@ -77,6 +78,7 @@ def map_attachment(attachment: Attachment) -> AttachmentResponse:
         id=attachment.id,
         name=attachment.filename,
         content_type=attachment.content_type,
+        transcription=attachment.transcription,
     )
 
 

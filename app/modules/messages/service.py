@@ -31,6 +31,7 @@ from app.modules.messages.unread.service import UnreadCounterService
 from app.modules.rooms.model import ChatRoom
 from app.modules.rooms.service import RoomService
 from app.modules.system.cleanup_jobs.service import CleanupJobService
+from app.modules.transcription.service import TranscriptionService
 from app.modules.users.model import User
 from app.platform.backends.dragonfly.service import DragonflyService
 from app.platform.backends.s3.service import (
@@ -70,6 +71,7 @@ class MessageService:
         unread_counters: UnreadCounterService,
         cleanup_jobs: CleanupJobService,
         s3_service: S3Service,
+        transcription_service: TranscriptionService,
     ):
         self.room_service = room_service
         self.dragonfly = dragonfly
@@ -78,6 +80,7 @@ class MessageService:
         self.unread_counters = unread_counters
         self.cleanup_jobs = cleanup_jobs
         self.s3_service = s3_service
+        self.transcription_service = transcription_service
 
     async def _get_room_or_404(self, room_id: str) -> ChatRoom:
         room = await ChatRoom.get(room_id)
@@ -433,6 +436,7 @@ class MessageService:
                     filename=attachment.filename,
                     object_path=object_path,
                     content_type=attachment.content_type,
+                    transcription=attachment.transcription,
                 )
             )
         return copied_attachments
@@ -877,3 +881,28 @@ class MessageService:
                             exc_info=True,
                         )
         return result
+
+    async def get_audio_message_transcription(
+        self,
+        message_id: str,
+        attachment_id: str,
+        user_id: str,
+    ) -> MessageResponse:
+        audio_attachment = await self.get_attachment(
+            message_id=message_id,
+            attachment_id=attachment_id,
+            user_id=user_id,
+        )
+
+        message = await self._get_message_or_404(message_id)
+        attachment = next(
+            (item for item in message.attachments if item.id == attachment_id), None
+        )
+
+        transcription = await self.transcription_service.transcript_voice_message(
+            audio=audio_attachment,
+            attachment=attachment,
+        )
+        attachment.transcription = transcription
+        await message.save()
+        return self._serialize_message(message)
