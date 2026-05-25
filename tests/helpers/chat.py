@@ -52,6 +52,28 @@ def create_message(
     return response.json()
 
 
+def create_voice_message(
+    client: TestClient,
+    access_token: str,
+    room_id: str,
+    *,
+    duration_ms: int = 1200,
+    filename: str = "voice-message.mp3",
+    content_type: str = "audio/mpeg",
+    file_content: bytes = b"voice-bytes",
+) -> dict:
+    response = client.post(
+        "/message/voice",
+        headers=auth_headers(access_token),
+        data={"room_id": room_id, "duration_ms": str(duration_ms)},
+        files={
+            "file": (filename, io.BytesIO(file_content), content_type),
+        },
+    )
+    assert response.status_code == 200
+    return response.json()
+
+
 def delete_message(
     client: TestClient,
     access_token: str,
