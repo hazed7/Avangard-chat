@@ -2,7 +2,7 @@ from fastapi import APIRouter, Depends
 
 from app.modules.ai_assist.schemas import RewriteRequest, RewriteResponse
 from app.modules.ai_assist.service import AIAssistService
-from app.modules.system.dependencies import verify_token
+from app.modules.subscriptions.dependencies import require_feature
 
 router = APIRouter()
 
@@ -10,7 +10,7 @@ router = APIRouter()
 @router.post("/ai/rewrite", response_model=RewriteResponse)
 async def rewrite_message(
     body: RewriteRequest,
-    _user: dict = Depends(verify_token),
+    _: None = Depends(require_feature("ai_assist")),
 ) -> RewriteResponse:
     """
     Предлагает переработанный вариант сообщения в указанном стиле.

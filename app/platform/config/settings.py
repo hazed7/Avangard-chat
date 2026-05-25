@@ -267,6 +267,7 @@ class Settings(BaseSettings):
     summary_rate_limit_max_attempts: int = 10
 
     ai_transcription_model: str = "gpt-4o-transcribe"
+    subscription_self_activation_enabled: bool = False
 
     model_config = SettingsConfigDict(env_file=".env")
 
