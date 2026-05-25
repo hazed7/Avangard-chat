@@ -25,7 +25,8 @@ services:
       - S3_SECRET_KEY=${S3_SECRET_KEY:-s3_admin}
       - AI_API_KEY=${AI_API_KEY:-ai_api_key}
       - AI_BASE_URL=${AI_BASE_URL:-https://api.groq.com/openai/v1}
-      - AI_TRANSCRIPTION_MODEL=${AI_TRANSCRIPTION_MODEL:-whisper-large-v3-turbo}
+      - AI_TRANSCRIPTION_PROVIDER=${AI_TRANSCRIPTION_PROVIDER:-groq}
+      - AI_TRANSCRIPTION_API_KEY=${AI_TRANSCRIPTION_API_KEY:-ai_transcription_api_key}
     depends_on:
       mongodb:
         condition: service_healthy

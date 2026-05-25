@@ -16,7 +16,7 @@ TRANSCRIPTION_BASE_URLS: dict[TranscriptionProvider, str] = {
 
 TRANSCRIPTION_MODELS: dict[TranscriptionProvider, str] = {
     "groq": "whisper-large-v3-turbo",
-    "openai": "whisper-1",
+    "openai": "gpt-4o-transcribe",
 }
 
 
