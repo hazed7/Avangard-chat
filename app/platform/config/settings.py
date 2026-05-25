@@ -7,6 +7,17 @@ from pydantic_settings import BaseSettings, SettingsConfigDict
 
 FailPolicy = Literal["open", "closed"]
 CookieSameSite = Literal["lax", "strict", "none"]
+TranscriptionProvider = Literal["groq", "openai"]
+
+TRANSCRIPTION_BASE_URLS: dict[TranscriptionProvider, str] = {
+    "groq": "https://api.groq.com/openai/v1",
+    "openai": "https://api.openai.com/v1",
+}
+
+TRANSCRIPTION_MODELS: dict[TranscriptionProvider, str] = {
+    "groq": "whisper-large-v3-turbo",
+    "openai": "gpt-4o-transcribe",
+}
 
 
 class DatabaseSettings(BaseModel):
@@ -153,6 +164,9 @@ class OpenAISettings(BaseModel):
     base_url: str
     api_key: str
     summary_model: str
+    transcription_base_url: str
+    transcription_api_key: str
+    transcription_model: str
     summary_max_messages: int
     summary_max_chars_per_message: int
 
@@ -266,6 +280,9 @@ class Settings(BaseSettings):
     summary_rate_limit_window_seconds: int = 60
     summary_rate_limit_max_attempts: int = 10
 
+    ai_transcription_model: str | None = None
+    ai_transcription_provider: TranscriptionProvider = "groq"
+    ai_transcription_api_key: str = ""
     subscription_self_activation_enabled: bool = False
 
     model_config = SettingsConfigDict(env_file=".env")
@@ -316,6 +333,15 @@ class Settings(BaseSettings):
                 raise ValueError(
                     f"message_encryption_keys[{key_id}] must decode to 32 bytes"
                 )
+        return self
+
+    @model_validator(mode="after")
+    def _resolve_transcription_model(self) -> "Settings":
+        if self.ai_transcription_model is not None:
+            return self
+        self.ai_transcription_model = TRANSCRIPTION_MODELS[
+            self.ai_transcription_provider
+        ]
         return self
 
     @property
@@ -484,6 +510,11 @@ class Settings(BaseSettings):
             base_url=self.ai_base_url,
             api_key=self.ai_api_key,
             summary_model=self.ai_summary_model,
+            transcription_base_url=TRANSCRIPTION_BASE_URLS[
+                self.ai_transcription_provider
+            ],
+            transcription_api_key=self.ai_transcription_api_key,
+            transcription_model=self.ai_transcription_model,
             summary_max_messages=self.ai_summary_max_messages,
             summary_max_chars_per_message=self.ai_summary_max_chars_per_message,
         )

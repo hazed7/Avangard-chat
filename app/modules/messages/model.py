@@ -15,6 +15,7 @@ class Attachment(BaseModel):
     filename: str
     object_path: str
     content_type: str
+    transcription: Optional[str] = None
 
 
 class Message(Document):

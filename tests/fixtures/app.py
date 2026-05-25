@@ -198,6 +198,7 @@ def client(monkeypatch: pytest.MonkeyPatch) -> TestClient:
         response = MagicMock()
         response.headers = {"content-type": "text/plain"}
         response.content = gen()
+        response.read = AsyncMock(return_value=b"fake content")
         response.close = AsyncMock()
         return response
 

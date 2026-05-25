@@ -47,6 +47,7 @@ CONTENT_TYPE_PREFIX_ATTACHMENTS = {
     "audio/wav": s3_settings.folder_audio,
     "audio/webm": s3_settings.folder_audio,
     "audio/aac": s3_settings.folder_audio,
+    "audio/x-m4a": s3_settings.folder_audio,
     # documents
     "application/pdf": s3_settings.folder_documents,
     "application/msword": s3_settings.folder_documents,

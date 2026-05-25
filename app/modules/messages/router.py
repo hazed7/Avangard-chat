@@ -208,3 +208,21 @@ async def forward_messages(
     message_service: MessageService = Depends(get_message_service),
 ):
     return await message_service.forward_messages(data=data, user_id=user["sub"])
+
+
+@router.get(
+    "/{message_id}/attachment/{attachment_id}/transcription",
+    response_model=MessageResponse,
+    responses=error_responses(400, 401, 404, 422),
+)
+async def get_audio_message_transcription(
+    message_id: str,
+    attachment_id: str,
+    user: dict = Depends(verify_token),
+    message_service: MessageService = Depends(get_message_service),
+):
+    return await message_service.get_audio_message_transcription(
+        message_id=message_id,
+        attachment_id=attachment_id,
+        user_id=user["sub"],
+    )

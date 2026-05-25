@@ -15,6 +15,7 @@ from cryptography.hazmat.primitives.ciphers.aead import AESGCM
 from fastapi import HTTPException, UploadFile
 from pymongo.errors import PyMongoError
 
+from app.modules.ai_assist.service import AIAssistService
 from app.modules.messages.model import Attachment, Message
 from app.modules.messages.schemas import (
     MarkRoomReadResponse,
@@ -433,6 +434,7 @@ class MessageService:
                     filename=attachment.filename,
                     object_path=object_path,
                     content_type=attachment.content_type,
+                    transcription=attachment.transcription,
                 )
             )
         return copied_attachments
@@ -877,3 +879,35 @@ class MessageService:
                             exc_info=True,
                         )
         return result
+
+    async def get_audio_message_transcription(
+        self,
+        message_id: str,
+        attachment_id: str,
+        user_id: str,
+    ) -> MessageResponse:
+        message = await self._get_message_or_404(message_id)
+        if message.is_deleted:
+            raise HTTPException(status_code=422, detail="Message is deleted")
+        await self.room_service.get_for_user(linked_document_id(message.room), user_id)
+
+        attachment = next(
+            (item for item in message.attachments if item.id == attachment_id), None
+        )
+        if not attachment:
+            raise HTTPException(status_code=404, detail="Attachment not found")
+
+        if attachment.transcription:
+            return self._serialize_message(message)
+
+        audio = await self.s3_service.download_file(
+            s3_settings.bucket_attachments, attachment.object_path
+        )
+
+        transcription = await AIAssistService.transcript_voice_message(
+            audio=audio,
+            attachment=attachment,
+        )
+        attachment.transcription = transcription
+        await message.save()
+        return self._serialize_message(message)

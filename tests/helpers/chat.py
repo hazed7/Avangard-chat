@@ -117,3 +117,15 @@ def download_attachment(
         f"/message/{message_id}/attachment/{attachment_id}",
         headers=auth_headers(access_token),
     )
+
+
+def transcribe_audio(
+    client: TestClient,
+    access_token: str,
+    message_id: str,
+    attachment_id: str,
+) -> Response:
+    return client.get(
+        f"/message/{message_id}/attachment/{attachment_id}/transcription",
+        headers=auth_headers(access_token),
+    )
