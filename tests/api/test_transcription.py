@@ -1,5 +1,6 @@
-from unittest.mock import MagicMock, patch
+from unittest.mock import AsyncMock, MagicMock, patch
 
+import openai
 import pytest
 from fastapi.testclient import TestClient
 
@@ -12,20 +13,25 @@ from tests.helpers.chat import (
     upload_attachment,
 )
 
+TRANSCRIPTIONS_CREATE = (
+    "app.modules.ai_assist.service._client.audio.transcriptions.create"
+)
+
 
 @pytest.fixture
-def mock_openai_client():
-    async def mock_transcription(*args, **kwargs):
-        mock = MagicMock()
-        mock.text = "Hey, transcribe it"
-        return mock
+def mock_transcription_create():
+    mock_result = MagicMock()
+    mock_result.text = "Hey, transcribe it"
 
-    with patch("app.modules.ai_assist.service._client") as mock_client:
-        mock_client.audio.transcriptions.create = mock_transcription
-        yield mock_client
+    with patch(
+        TRANSCRIPTIONS_CREATE,
+        new_callable=AsyncMock,
+    ) as mock_create:
+        mock_create.return_value = mock_result
+        yield mock_create
 
 
-def test_transcription_successful(client: TestClient, mock_openai_client):
+def test_transcription_successful(client: TestClient, mock_transcription_create):
     alice = register_user(client, "dm-alice")
     bob = register_user(client, "dm-bob")
 
@@ -55,9 +61,46 @@ def test_transcription_successful(client: TestClient, mock_openai_client):
 
     assert response.status_code == 200
     response_json = response.json()
-
     assert response_json["attachments"][0]["transcription"] == "Hey, transcribe it"
     assert response_json["id"] == message["id"]
+
+
+def test_transcription_idempotency(client: TestClient, mock_transcription_create):
+    alice = register_user(client, "dm-alice")
+    bob = register_user(client, "dm-bob")
+
+    room = create_dm(client, alice["access_token"], bob["user"]["id"])
+
+    message = create_message(client, alice["access_token"], room["id"], text=" ")
+
+    message_with_attachment = upload_attachment(
+        client,
+        alice["access_token"],
+        message["id"],
+        "audio_message.mp3",
+        "audio/mpeg",
+    ).json()
+
+    attachment_id = message_with_attachment["attachments"][0]["id"]
+
+    response1 = transcribe_audio(
+        client,
+        alice["access_token"],
+        message["id"],
+        attachment_id,
+    )
+    assert response1.status_code == 200
+    assert mock_transcription_create.call_count == 1
+
+    response2 = transcribe_audio(
+        client,
+        alice["access_token"],
+        message["id"],
+        attachment_id,
+    )
+    assert response2.status_code == 200
+    assert response2.json() == response1.json()
+    assert mock_transcription_create.call_count == 1
 
 
 def test_transcribe_audio_message_deleted(client: TestClient):
@@ -137,16 +180,22 @@ def test_transcribe_audio_no_attachment(client: TestClient):
 
 
 @pytest.fixture
-def mock_openai_client_error():
-    async def mock_transcription(*args, **kwargs):
-        raise Exception("OpenAI error")
+def mock_transcription_create_error():
+    async def raise_error(*args, **kwargs):
+        raise openai.APIStatusError(
+            message="OpenAI error",
+            body={},
+            response=MagicMock(status_code=500),
+        )
 
-    with patch("app.modules.ai_assist.service._client") as mock_client:
-        mock_client.audio.transcriptions.create = mock_transcription
-        yield mock_client
+    with patch(TRANSCRIPTIONS_CREATE, new=raise_error) as mock_create:
+        yield mock_create
 
 
-def test_transcription_openai_error(client: TestClient, mock_openai_client_error):
+def test_transcription_openai_error(
+    client: TestClient,
+    mock_transcription_create_error,
+):
     alice = register_user(client, "dm-alice")
     bob = register_user(client, "dm-bob")
     room = create_dm(client, alice["access_token"], bob["user"]["id"])
@@ -162,5 +211,4 @@ def test_transcription_openai_error(client: TestClient, mock_openai_client_error
         message_with_attachment["attachments"][0]["id"],
     )
 
-    assert response.status_code == 422
-    assert response.json()["detail"] == "Audio can't be transcribed"
+    assert response.status_code == 500
