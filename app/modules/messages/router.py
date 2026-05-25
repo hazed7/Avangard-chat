@@ -1,4 +1,4 @@
-from fastapi import APIRouter, Depends, Query, UploadFile
+from fastapi import APIRouter, Depends, File, Form, Query, UploadFile
 from starlette.responses import StreamingResponse
 
 from app.modules.messages.schemas import (
@@ -35,6 +35,26 @@ async def send_message(
     message_service: MessageService = Depends(get_message_service),
 ):
     return await message_service.send(data=data, sender_id=user["sub"])
+
+
+@router.post(
+    "/voice",
+    response_model=MessageResponse,
+    responses=error_responses(401, 403, 404, 422),
+)
+async def send_voice_message(
+    room_id: str = Form(...),
+    duration_ms: int = Form(..., gt=0),
+    file: UploadFile = File(...),
+    user: dict = Depends(verify_token),
+    message_service: MessageService = Depends(get_message_service),
+):
+    return await message_service.send_voice_message(
+        room_id=room_id,
+        duration_ms=duration_ms,
+        file=file,
+        sender_id=user["sub"],
+    )
 
 
 @router.get(
