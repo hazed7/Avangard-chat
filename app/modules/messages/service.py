@@ -410,6 +410,10 @@ class MessageService:
         self, message_encrypted: Message, room: ChatRoom, sender_id: str, text: str
     ) -> MessageResponse:
         await message_encrypted.insert()
+        await ChatRoom.get_motor_collection().update_one(
+            {"_id": room.id},
+            {"$set": {"last_message_at": message_encrypted.created_at}},
+        )
         await self._cleanup_typesense(message_encrypted, room, sender_id, text)
         logger.info(
             "event=message.send user_id=%s room_id=%s message_id=%s",

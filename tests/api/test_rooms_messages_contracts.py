@@ -21,7 +21,15 @@ def test_rooms_and_messages_contract_shapes(client: TestClient):
     group = group_response.json()
     _assert_exact_keys(
         group,
-        {"id", "name", "is_group", "member_ids", "created_by_id", "created_at"},
+        {
+            "id",
+            "name",
+            "is_group",
+            "member_ids",
+            "created_by_id",
+            "created_at",
+            "last_message_at",
+        },
     )
 
     dm_response = client.post(
@@ -33,7 +41,15 @@ def test_rooms_and_messages_contract_shapes(client: TestClient):
     dm = dm_response.json()
     _assert_exact_keys(
         dm,
-        {"id", "name", "is_group", "member_ids", "created_by_id", "created_at"},
+        {
+            "id",
+            "name",
+            "is_group",
+            "member_ids",
+            "created_by_id",
+            "created_at",
+            "last_message_at",
+        },
     )
 
     get_room_response = client.get(
@@ -43,7 +59,15 @@ def test_rooms_and_messages_contract_shapes(client: TestClient):
     assert get_room_response.status_code == 200
     _assert_exact_keys(
         get_room_response.json(),
-        {"id", "name", "is_group", "member_ids", "created_by_id", "created_at"},
+        {
+            "id",
+            "name",
+            "is_group",
+            "member_ids",
+            "created_by_id",
+            "created_at",
+            "last_message_at",
+        },
     )
 
     add_member_response = client.post(
@@ -54,7 +78,15 @@ def test_rooms_and_messages_contract_shapes(client: TestClient):
     assert add_member_response.status_code == 200
     _assert_exact_keys(
         add_member_response.json(),
-        {"id", "name", "is_group", "member_ids", "created_by_id", "created_at"},
+        {
+            "id",
+            "name",
+            "is_group",
+            "member_ids",
+            "created_by_id",
+            "created_at",
+            "last_message_at",
+        },
     )
 
     remove_member_response = client.delete(
@@ -64,7 +96,15 @@ def test_rooms_and_messages_contract_shapes(client: TestClient):
     assert remove_member_response.status_code == 200
     _assert_exact_keys(
         remove_member_response.json(),
-        {"id", "name", "is_group", "member_ids", "created_by_id", "created_at"},
+        {
+            "id",
+            "name",
+            "is_group",
+            "member_ids",
+            "created_by_id",
+            "created_at",
+            "last_message_at",
+        },
     )
 
     list_rooms_response = client.get(
@@ -76,7 +116,15 @@ def test_rooms_and_messages_contract_shapes(client: TestClient):
     _assert_exact_keys(list_payload, {"groups", "dms", "next_cursor"})
     assert all(
         set(room.keys())
-        == {"id", "name", "is_group", "member_ids", "created_by_id", "created_at"}
+        == {
+            "id",
+            "name",
+            "is_group",
+            "member_ids",
+            "created_by_id",
+            "created_at",
+            "last_message_at",
+        }
         for room in list_payload["groups"] + list_payload["dms"]
     )
 

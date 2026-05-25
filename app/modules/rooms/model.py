@@ -15,6 +15,7 @@ class ChatRoom(Document):
     members: List[Link[User]] = Field(default_factory=list)
     created_by: Link[User]
     created_at: datetime = Field(default_factory=lambda: datetime.now(UTC))
+    last_message_at: Optional[datetime] = None
 
     class Settings:
         name = "chat_rooms"
