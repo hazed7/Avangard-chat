@@ -7,6 +7,40 @@ def _assert_exact_keys(payload: dict, keys: set[str]) -> None:
     assert set(payload.keys()) == keys
 
 
+ROOM_KEYS = {
+    "id",
+    "name",
+    "is_group",
+    "member_ids",
+    "created_by_id",
+    "admin_ids",
+    "avatar_object_path",
+    "is_archived",
+    "mute_forever",
+    "muted_until",
+    "created_at",
+    "last_message_at",
+    "last_message_preview",
+}
+
+MESSAGE_KEYS = {
+    "id",
+    "room_id",
+    "sender_id",
+    "text",
+    "message_type",
+    "mentioned_user_ids",
+    "reactions",
+    "is_edited",
+    "edited_at",
+    "is_deleted",
+    "read_by",
+    "created_at",
+    "attachments",
+    "original_sender_id",
+}
+
+
 def test_rooms_and_messages_contract_shapes(client: TestClient):
     owner = register_user(client, "contract-owner")
     member = register_user(client, "contract-member")
@@ -21,16 +55,7 @@ def test_rooms_and_messages_contract_shapes(client: TestClient):
     group = group_response.json()
     _assert_exact_keys(
         group,
-        {
-            "id",
-            "name",
-            "is_group",
-            "member_ids",
-            "created_by_id",
-            "created_at",
-            "last_message_at",
-            "last_message_preview",
-        },
+        ROOM_KEYS,
     )
 
     dm_response = client.post(
@@ -42,16 +67,7 @@ def test_rooms_and_messages_contract_shapes(client: TestClient):
     dm = dm_response.json()
     _assert_exact_keys(
         dm,
-        {
-            "id",
-            "name",
-            "is_group",
-            "member_ids",
-            "created_by_id",
-            "created_at",
-            "last_message_at",
-            "last_message_preview",
-        },
+        ROOM_KEYS,
     )
 
     get_room_response = client.get(
@@ -61,16 +77,7 @@ def test_rooms_and_messages_contract_shapes(client: TestClient):
     assert get_room_response.status_code == 200
     _assert_exact_keys(
         get_room_response.json(),
-        {
-            "id",
-            "name",
-            "is_group",
-            "member_ids",
-            "created_by_id",
-            "created_at",
-            "last_message_at",
-            "last_message_preview",
-        },
+        ROOM_KEYS,
     )
 
     add_member_response = client.post(
@@ -81,16 +88,7 @@ def test_rooms_and_messages_contract_shapes(client: TestClient):
     assert add_member_response.status_code == 200
     _assert_exact_keys(
         add_member_response.json(),
-        {
-            "id",
-            "name",
-            "is_group",
-            "member_ids",
-            "created_by_id",
-            "created_at",
-            "last_message_at",
-            "last_message_preview",
-        },
+        ROOM_KEYS,
     )
 
     remove_member_response = client.delete(
@@ -100,16 +98,7 @@ def test_rooms_and_messages_contract_shapes(client: TestClient):
     assert remove_member_response.status_code == 200
     _assert_exact_keys(
         remove_member_response.json(),
-        {
-            "id",
-            "name",
-            "is_group",
-            "member_ids",
-            "created_by_id",
-            "created_at",
-            "last_message_at",
-            "last_message_preview",
-        },
+        ROOM_KEYS,
     )
 
     list_rooms_response = client.get(
@@ -118,20 +107,12 @@ def test_rooms_and_messages_contract_shapes(client: TestClient):
     )
     assert list_rooms_response.status_code == 200
     list_payload = list_rooms_response.json()
-    _assert_exact_keys(list_payload, {"groups", "dms", "next_cursor"})
+    _assert_exact_keys(list_payload, {"groups", "dms", "archived", "next_cursor"})
     assert all(
-        set(room.keys())
-        == {
-            "id",
-            "name",
-            "is_group",
-            "member_ids",
-            "created_by_id",
-            "created_at",
-            "last_message_at",
-            "last_message_preview",
-        }
-        for room in list_payload["groups"] + list_payload["dms"]
+        set(room.keys()) == ROOM_KEYS
+        for room in list_payload["groups"]
+        + list_payload["dms"]
+        + list_payload["archived"]
     )
 
     send_message_response = client.post(
@@ -143,20 +124,7 @@ def test_rooms_and_messages_contract_shapes(client: TestClient):
     message = send_message_response.json()
     _assert_exact_keys(
         message,
-        {
-            "id",
-            "room_id",
-            "sender_id",
-            "text",
-            "message_type",
-            "is_edited",
-            "edited_at",
-            "is_deleted",
-            "read_by",
-            "created_at",
-            "attachments",
-            "original_sender_id",
-        },
+        MESSAGE_KEYS,
     )
 
     history_response = client.get(
@@ -183,20 +151,7 @@ def test_rooms_and_messages_contract_shapes(client: TestClient):
     assert mark_read_response.status_code == 200
     _assert_exact_keys(
         mark_read_response.json(),
-        {
-            "id",
-            "room_id",
-            "sender_id",
-            "text",
-            "message_type",
-            "is_edited",
-            "edited_at",
-            "is_deleted",
-            "read_by",
-            "created_at",
-            "attachments",
-            "original_sender_id",
-        },
+        MESSAGE_KEYS,
     )
 
     unread_response = client.get(
@@ -221,20 +176,7 @@ def test_rooms_and_messages_contract_shapes(client: TestClient):
     assert edit_response.status_code == 200
     _assert_exact_keys(
         edit_response.json(),
-        {
-            "id",
-            "room_id",
-            "sender_id",
-            "text",
-            "message_type",
-            "is_edited",
-            "edited_at",
-            "is_deleted",
-            "read_by",
-            "created_at",
-            "attachments",
-            "original_sender_id",
-        },
+        MESSAGE_KEYS,
     )
 
     delete_message_response = client.delete(
@@ -268,12 +210,25 @@ def test_openapi_rooms_and_messages_contracts_are_explicit(client: TestClient):
         ("/room/{room_id}", "delete"),
         ("/message", "post"),
         ("/message/voice", "post"),
+        ("/room/{room_id}", "patch"),
+        ("/room/{room_id}/avatar", "post"),
+        ("/room/{room_id}/avatar", "delete"),
+        ("/room/{room_id}/admins", "post"),
+        ("/room/{room_id}/admins/{user_id}", "delete"),
+        ("/room/{room_id}/preferences", "patch"),
+        ("/room/{room_id}/invite-link", "post"),
+        ("/room/{room_id}/invite-link", "delete"),
+        ("/room/join/{token}", "post"),
+        ("/room/{room_id}/pins/{message_id}", "post"),
+        ("/room/{room_id}/pins", "get"),
+        ("/room/{room_id}/pins/{message_id}", "delete"),
         ("/message/room/{room_id}", "get"),
         ("/message/search", "get"),
         ("/message/{message_id}/read", "post"),
         ("/message/room/{room_id}/read", "post"),
         ("/message/unread", "get"),
         ("/message/{message_id}", "patch"),
+        ("/message/{message_id}/reaction", "post"),
         ("/message/{message_id}", "delete"),
     ]
 
