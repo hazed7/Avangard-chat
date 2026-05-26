@@ -340,7 +340,8 @@ async def handle_room_chat(
                 )
                 if existing_message_id:
                     existing_message = await message_service.get_by_id(
-                        existing_message_id
+                        existing_message_id,
+                        viewer_id=user_id,
                     )
                     await _send_message_created(
                         websocket,

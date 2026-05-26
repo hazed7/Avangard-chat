@@ -12,6 +12,7 @@ from app.modules.messages.schemas import (
     UnreadCountsResponse,
 )
 from app.modules.messages.service import MessageService
+from app.modules.subscriptions.dependencies import require_feature
 from app.modules.system.dependencies import (
     get_message_service,
     get_rate_limit_service,
@@ -239,6 +240,7 @@ async def forward_messages(
 async def get_audio_message_transcription(
     message_id: str,
     attachment_id: str,
+    _: None = Depends(require_feature("transcription")),
     user: dict = Depends(verify_token),
     message_service: MessageService = Depends(get_message_service),
 ):

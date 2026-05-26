@@ -26,13 +26,25 @@ PLANS: dict[str, SubscriptionPlan] = {
         plan_id="premium_monthly",
         name="Premium Monthly",
         price_label="$9.99/month",
-        features=["basic_messaging", "ai_assist", "unlimited_calls", "message_summary"],
+        features=[
+            "basic_messaging",
+            "ai_assist",
+            "unlimited_calls",
+            "message_summary",
+            "transcription",
+        ],
     ),
     "premium_yearly": SubscriptionPlan(
         plan_id="premium_yearly",
         name="Premium Yearly",
         price_label="$99.99/year",
-        features=["basic_messaging", "ai_assist", "unlimited_calls", "message_summary"],
+        features=[
+            "basic_messaging",
+            "ai_assist",
+            "unlimited_calls",
+            "message_summary",
+            "transcription",
+        ],
     ),
 }
 

@@ -365,7 +365,10 @@ async def list_room_pins(
     pins = await room_service.get_pinned_messages(room_id=room_id, user_id=user["sub"])
     responses: list[PinnedMessageResponse] = []
     for pinned in pins:
-        message = await message_service.get_by_id(pinned.message_id)
+        message = await message_service.get_by_id(
+            pinned.message_id,
+            viewer_id=user["sub"],
+        )
         responses.append(
             PinnedMessageResponse(
                 message=message,
