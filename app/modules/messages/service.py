@@ -34,6 +34,7 @@ from app.modules.messages.schemas import (
 from app.modules.messages.unread.service import UnreadCounterService
 from app.modules.rooms.model import ChatRoom
 from app.modules.rooms.service import RoomService
+from app.modules.subscriptions.service import SubscriptionService
 from app.modules.system.cleanup_jobs.service import CleanupJobService
 from app.modules.users.model import User
 from app.platform.backends.dragonfly.service import DragonflyService
@@ -77,6 +78,7 @@ class MessageService:
         unread_counters: UnreadCounterService,
         cleanup_jobs: CleanupJobService,
         s3_service: S3Service,
+        subscriptions: SubscriptionService,
     ):
         self.room_service = room_service
         self.dragonfly = dragonfly
@@ -85,6 +87,7 @@ class MessageService:
         self.unread_counters = unread_counters
         self.cleanup_jobs = cleanup_jobs
         self.s3_service = s3_service
+        self.subscriptions = subscriptions
 
     async def _get_room_or_404(self, room_id: str) -> ChatRoom:
         room = await ChatRoom.get(room_id)
@@ -172,8 +175,17 @@ class MessageService:
             context=self._message_crypto_context(message),
         )
 
-    def _serialize_message(
-        self, message: Message, *, text: str | None = None
+    async def _can_view_transcriptions(self, user_id: str) -> bool:
+        features = await self.subscriptions.get_user_features(user_id)
+        return "transcription" in features
+
+    async def _serialize_message(
+        self,
+        message: Message,
+        *,
+        text: str | None = None,
+        viewer_id: str | None = None,
+        include_transcriptions: bool | None = None,
     ) -> MessageResponse:
         if message.is_deleted:
             decrypted_text = DELETED_MESSAGE_TEXT
@@ -181,7 +193,17 @@ class MessageService:
             decrypted_text = VOICE_MESSAGE_PREVIEW
         else:
             decrypted_text = text if text is not None else self._decrypt_text(message)
-        return serialize_message_response(message, text=decrypted_text)
+        if include_transcriptions is None:
+            include_transcriptions = (
+                await self._can_view_transcriptions(viewer_id)
+                if viewer_id is not None
+                else True
+            )
+        return serialize_message_response(
+            message,
+            text=decrypted_text,
+            include_transcriptions=include_transcriptions,
+        )
 
     @staticmethod
     def _room_ref(room: ChatRoom):
@@ -494,7 +516,11 @@ class MessageService:
             str(room.id),
             str(message_encrypted.id),
         )
-        return self._serialize_message(message_encrypted, text=text)
+        return await self._serialize_message(
+            message_encrypted,
+            text=text,
+            viewer_id=sender_id,
+        )
 
     async def _copy_attachments(
         self, attachments: list[Attachment], room_id: str
@@ -645,7 +671,8 @@ class MessageService:
         )
         return MessageCursorPageResponse(
             items=[
-                self._serialize_message(message) for message in reversed(page_items)
+                await self._serialize_message(message, viewer_id=user_id)
+                for message in reversed(page_items)
             ],
             next_cursor=next_cursor,
         )
@@ -712,7 +739,7 @@ class MessageService:
             user_id,
             message_id,
         )
-        return self._serialize_message(message, text=data.text)
+        return await self._serialize_message(message, text=data.text, viewer_id=user_id)
 
     async def delete(self, message_id: str, user_id: str) -> None:
         message = await self._get_message_or_404(message_id)
@@ -753,9 +780,9 @@ class MessageService:
             was_deleted,
         )
 
-    async def get_by_id(self, message_id: str) -> MessageResponse:
+    async def get_by_id(self, message_id: str, viewer_id: str) -> MessageResponse:
         message = await self._get_message_or_404(message_id)
-        return self._serialize_message(message)
+        return await self._serialize_message(message, viewer_id=viewer_id)
 
     async def mark_read(self, message_id: str, user_id: str) -> MessageResponse:
         message = await self._get_message_or_404(message_id)
@@ -785,7 +812,7 @@ class MessageService:
                 state="read",
             )
         updated_message = await self._get_message_or_404(message_id)
-        return self._serialize_message(updated_message)
+        return await self._serialize_message(updated_message, viewer_id=user_id)
 
     async def mark_room_read(self, room_id: str, user_id: str) -> MarkRoomReadResponse:
         room = await self.room_service.get_for_user(room_id, user_id)
@@ -933,7 +960,10 @@ class MessageService:
         )
         next_cursor = self._encode_search_cursor(page + 1) if has_more else None
         return MessageCursorPageResponse(
-            items=[self._serialize_message(message) for message in ordered_messages],
+            items=[
+                await self._serialize_message(message, viewer_id=user_id)
+                for message in ordered_messages
+            ],
             next_cursor=next_cursor,
         )
 
@@ -972,7 +1002,7 @@ class MessageService:
         )
         await message.save()
 
-        return self._serialize_message(message)
+        return await self._serialize_message(message, viewer_id=user_id)
 
     async def get_attachment(
         self, message_id: str, attachment_id: str, user_id: str
@@ -1080,7 +1110,11 @@ class MessageService:
             )
 
         if attachment.transcription:
-            return self._serialize_message(message)
+            return await self._serialize_message(
+                message,
+                viewer_id=user_id,
+                include_transcriptions=True,
+            )
 
         audio = await self.s3_service.download_file(
             s3_settings.bucket_attachments, attachment.object_path
@@ -1092,7 +1126,11 @@ class MessageService:
         )
         attachment.transcription = transcription
         await message.save()
-        return self._serialize_message(message)
+        return await self._serialize_message(
+            message,
+            viewer_id=user_id,
+            include_transcriptions=True,
+        )
 
     async def update_reaction(
         self,
@@ -1162,4 +1200,4 @@ class MessageService:
                 },
             },
         )
-        return self._serialize_message(message)
+        return await self._serialize_message(message, viewer_id=user_id)

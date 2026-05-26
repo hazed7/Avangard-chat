@@ -10,6 +10,7 @@ from tests.helpers.chat import (
     create_dm,
     create_message,
     delete_message,
+    get_messages,
     transcribe_audio,
     upload_attachment,
 )
@@ -242,3 +243,57 @@ def test_transcription_no_subscription(client: TestClient):
     )
 
     assert response.status_code == 403
+
+
+def test_transcription_is_redacted_from_history_for_non_subscribers(
+    client: TestClient,
+):
+    alice = register_user(client, "dm-alice")
+    bob = register_user(client, "dm-bob")
+    room = create_dm(client, alice["access_token"], bob["user"]["id"])
+
+    mock_service = AsyncMock()
+
+    async def get_user_features(user_id: str) -> list[str]:
+        if user_id == alice["user"]["id"]:
+            return ["transcription"]
+        return []
+
+    mock_service.get_user_features.side_effect = get_user_features
+    client.app.dependency_overrides[get_subscription_service] = lambda: mock_service
+    try:
+        message = create_message(client, alice["access_token"], room["id"], text=" ")
+        message_with_attachment = upload_attachment(
+            client,
+            alice["access_token"],
+            message["id"],
+            "audio_message.mp3",
+            "audio/mpeg",
+        ).json()
+
+        attachment_id = message_with_attachment["attachments"][0]["id"]
+        mock_result = MagicMock()
+        mock_result.text = "Hey, transcribe it"
+        with patch(TRANSCRIPTIONS_CREATE, new_callable=AsyncMock) as mock_create:
+            mock_create.return_value = mock_result
+            response = transcribe_audio(
+                client,
+                alice["access_token"],
+                message["id"],
+                attachment_id,
+            )
+
+        assert response.status_code == 200
+        assert (
+            response.json()["attachments"][0]["transcription"] == "Hey, transcribe it"
+        )
+
+        alice_history = get_messages(client, alice["access_token"], room["id"])
+        assert alice_history["items"][0]["attachments"][0]["transcription"] == (
+            "Hey, transcribe it"
+        )
+
+        bob_history = get_messages(client, bob["access_token"], room["id"])
+        assert bob_history["items"][0]["attachments"][0]["transcription"] is None
+    finally:
+        client.app.dependency_overrides.pop(get_subscription_service, None)

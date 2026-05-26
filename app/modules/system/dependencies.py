@@ -10,6 +10,7 @@ from app.modules.calls.service import CallService
 from app.modules.messages.service import MessageService
 from app.modules.messages.unread.service import UnreadCounterService
 from app.modules.rooms.service import RoomService
+from app.modules.subscriptions.service import SubscriptionService
 from app.modules.system.cleanup_jobs.service import CleanupJobService
 from app.modules.users.model import User
 from app.platform.backends.dragonfly.container import get_dragonfly_service_singleton
@@ -132,6 +133,10 @@ def get_s3_service() -> S3Service:
     return get_s3_service_singleton()
 
 
+def get_subscription_service() -> SubscriptionService:
+    return SubscriptionService()
+
+
 def get_room_service(
     dragonfly: DragonflyService = Depends(get_dragonfly_service),
     typesense: TypesenseService = Depends(get_typesense_service),
@@ -156,6 +161,7 @@ def get_message_service(
     unread_counters: UnreadCounterService = Depends(get_unread_counter_service),
     cleanup_jobs: CleanupJobService = Depends(get_cleanup_job_service),
     s3_service: S3Service = Depends(get_s3_service),
+    subscriptions: SubscriptionService = Depends(get_subscription_service),
 ) -> MessageService:
     return MessageService(
         room_service=room_service,
@@ -165,6 +171,7 @@ def get_message_service(
         unread_counters=unread_counters,
         cleanup_jobs=cleanup_jobs,
         s3_service=s3_service,
+        subscriptions=subscriptions,
     )
 
 

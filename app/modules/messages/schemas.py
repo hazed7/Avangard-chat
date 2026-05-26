@@ -94,14 +94,18 @@ class UnreadCountsResponse(BaseModel):
     by_room: List[RoomUnreadCount]
 
 
-def map_attachment(attachment: Attachment) -> AttachmentResponse:
+def map_attachment(
+    attachment: Attachment,
+    *,
+    include_transcription: bool,
+) -> AttachmentResponse:
     return AttachmentResponse(
         id=attachment.id,
         name=attachment.filename,
         content_type=attachment.content_type,
         kind=attachment.kind,
         duration_ms=attachment.duration_ms,
-        transcription=attachment.transcription,
+        transcription=attachment.transcription if include_transcription else None,
     )
 
 
@@ -113,7 +117,12 @@ def map_reaction(reaction: MessageReaction) -> MessageReactionResponse:
     )
 
 
-def serialize_message_response(message: Message, *, text: str) -> MessageResponse:
+def serialize_message_response(
+    message: Message,
+    *,
+    text: str,
+    include_transcriptions: bool = True,
+) -> MessageResponse:
     return MessageResponse.model_validate(
         {
             "id": str(message.id),
@@ -129,7 +138,11 @@ def serialize_message_response(message: Message, *, text: str) -> MessageRespons
             "read_by": [linked_document_id(user) for user in message.read_by],
             "created_at": message.created_at,
             "attachments": [
-                map_attachment(attachment) for attachment in message.attachments
+                map_attachment(
+                    attachment,
+                    include_transcription=include_transcriptions,
+                )
+                for attachment in message.attachments
             ],
             "original_sender_id": optional_linked_document_id(message.original_sender),
         }

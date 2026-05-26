@@ -1,11 +1,7 @@
 from fastapi import Depends, HTTPException, status
 
 from app.modules.subscriptions.service import SubscriptionService
-from app.modules.system.dependencies import verify_token
-
-
-def get_subscription_service() -> SubscriptionService:
-    return SubscriptionService()
+from app.modules.system.dependencies import get_subscription_service, verify_token
 
 
 async def require_active_subscription(
