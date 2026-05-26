@@ -3,7 +3,13 @@ from typing import List, Optional
 
 from pydantic import BaseModel, ConfigDict, Field
 
-from app.modules.messages.model import Attachment, AttachmentKind, Message, MessageType
+from app.modules.messages.model import (
+    Attachment,
+    AttachmentKind,
+    Message,
+    MessageReaction,
+    MessageType,
+)
 from app.platform.persistence.links import (
     linked_document_id,
     optional_linked_document_id,
@@ -27,6 +33,10 @@ class MessageForward(BaseModel):
     target_room_id: str
 
 
+class MessageReactionUpdate(BaseModel):
+    emoji: str = Field(min_length=1, max_length=16)
+
+
 class AttachmentResponse(BaseModel):
     id: str
     name: str
@@ -36,6 +46,12 @@ class AttachmentResponse(BaseModel):
     transcription: str | None
 
 
+class MessageReactionResponse(BaseModel):
+    emoji: str
+    user_ids: list[str]
+    count: int
+
+
 class MessageResponse(BaseModel):
     model_config = ConfigDict(extra="forbid")
     id: str
@@ -43,6 +59,8 @@ class MessageResponse(BaseModel):
     sender_id: str
     text: str = Field(min_length=1, max_length=5000)
     message_type: MessageType
+    mentioned_user_ids: list[str]
+    reactions: list[MessageReactionResponse]
     is_edited: bool
     edited_at: Optional[datetime] = None
     is_deleted: bool
@@ -87,6 +105,14 @@ def map_attachment(attachment: Attachment) -> AttachmentResponse:
     )
 
 
+def map_reaction(reaction: MessageReaction) -> MessageReactionResponse:
+    return MessageReactionResponse(
+        emoji=reaction.emoji,
+        user_ids=reaction.user_ids,
+        count=len(reaction.user_ids),
+    )
+
+
 def serialize_message_response(message: Message, *, text: str) -> MessageResponse:
     return MessageResponse.model_validate(
         {
@@ -95,6 +121,8 @@ def serialize_message_response(message: Message, *, text: str) -> MessageRespons
             "sender_id": linked_document_id(message.sender),
             "text": text,
             "message_type": message.message_type,
+            "mentioned_user_ids": message.mentioned_user_ids,
+            "reactions": [map_reaction(reaction) for reaction in message.reactions],
             "is_edited": message.is_edited,
             "edited_at": message.edited_at,
             "is_deleted": message.is_deleted,
