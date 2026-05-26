@@ -71,6 +71,7 @@ def test_room_list_is_partitioned_by_room_type(client: TestClient):
     payload = response.json()
     assert len(payload["groups"]) == 1
     assert len(payload["dms"]) == 1
+    assert payload["archived"] == []
     assert payload["dms"][0]["id"] == dm["id"]
     assert payload["next_cursor"] is None
 
@@ -111,6 +112,7 @@ def test_room_list_supports_cursor_pagination(client: TestClient):
     assert second_page.status_code == 200
     second_payload = second_page.json()
     assert len(second_payload["groups"]) == 1
+    assert second_payload["archived"] == []
     second_id = second_payload["groups"][0]["id"]
     assert first_id != second_id
     assert {first_id, second_id} == {first_group["id"], second_group["id"]}

@@ -3,11 +3,13 @@ import base64
 import hashlib
 import json
 import os
+import re
 from binascii import Error as BinasciiError
 from datetime import UTC, datetime
 from time import time
 
 from aiohttp import ClientResponse
+from beanie.odm.operators.find.comparison import In
 from bson import ObjectId
 from bson.errors import InvalidId
 from cryptography.exceptions import InvalidTag
@@ -16,12 +18,13 @@ from fastapi import HTTPException, UploadFile
 from pymongo.errors import PyMongoError
 
 from app.modules.ai_assist.service import AIAssistService
-from app.modules.messages.model import Attachment, Message
+from app.modules.messages.model import Attachment, Message, MessageReaction
 from app.modules.messages.schemas import (
     MarkRoomReadResponse,
     MessageCreate,
     MessageCursorPageResponse,
     MessageForward,
+    MessageReactionUpdate,
     MessageResponse,
     MessageUpdate,
     RoomUnreadCount,
@@ -52,6 +55,7 @@ VOICE_MESSAGE_PREVIEW = "[Voice message]"
 MAX_MARK_ROOM_READ_EVENT_IDS = 1000
 CURSOR_AAD = b"message-cursor:v1"
 CURSOR_NONCE_BYTES = 12
+MENTION_PATTERN = re.compile(r"(?<![A-Za-z0-9_.-])@([A-Za-z0-9_.-]+)")
 MESSAGE_WRITE_ERRORS = (
     HTTPException,
     PyMongoError,
@@ -135,6 +139,29 @@ class MessageService:
                 "sender_id": sender_id,
             },
         )
+
+    async def _extract_mentioned_user_ids(
+        self,
+        *,
+        text: str,
+        room: ChatRoom,
+    ) -> list[str]:
+        usernames = self._dedupe_preserve_order(MENTION_PATTERN.findall(text))
+        if not usernames:
+            return []
+        users = await User.find(In(User.username, usernames)).to_list()
+        users_by_username = {user.username: str(user.id) for user in users}
+        room_member_ids = set(self._room_member_ids(room))
+        mentioned_user_ids: list[str] = []
+        for username in usernames:
+            user_id = users_by_username.get(username)
+            if user_id and user_id in room_member_ids:
+                mentioned_user_ids.append(user_id)
+        return mentioned_user_ids
+
+    @staticmethod
+    def _dedupe_preserve_order(items: list[str]) -> list[str]:
+        return list(dict.fromkeys(items))
 
     def _decrypt_text(self, message: Message) -> str:
         return self.message_crypto.decrypt(
@@ -285,12 +312,7 @@ class MessageService:
         duration_ms: int | None = None,
     ) -> str:
         if message_type == "voice":
-            d = duration_ms or 0
-            s = d // 1000
-            m = s // 60
-            sec = s % 60
-            dur = f"{m}:{sec:02d}"
-            preview = f"голосовое  ●  {dur}"
+            preview = VOICE_MESSAGE_PREVIEW
         else:
             preview = text.replace("\n", " ")[:60]
         if room.is_group:
@@ -514,6 +536,10 @@ class MessageService:
             text_key_id=encrypted.key_id,
             text_aad=encrypted.aad,
             message_type="text",
+            mentioned_user_ids=await self._extract_mentioned_user_ids(
+                text=data.text,
+                room=room,
+            ),
             read_by=[sender],
             created_at=created_at,
         )
@@ -649,10 +675,17 @@ class MessageService:
             sender_id=linked_document_id(message.sender),
             created_at=message.created_at,
         )
+        room = await self.room_service.get_for_user(
+            linked_document_id(message.room), user_id
+        )
         message.text_ciphertext = encrypted.ciphertext
         message.text_nonce = encrypted.nonce
         message.text_key_id = encrypted.key_id
         message.text_aad = encrypted.aad
+        message.mentioned_user_ids = await self._extract_mentioned_user_ids(
+            text=data.text,
+            room=room,
+        )
         message.is_edited = True
         message.edited_at = datetime.now(UTC)
         await message.save()
@@ -706,6 +739,10 @@ class MessageService:
             message.attachments = []
             message.is_deleted = True
             await message.save()
+            await ChatRoom.get_motor_collection().update_one(
+                {"_id": message.room.ref.id},
+                {"$pull": {"pinned_messages": {"message_id": message_id}}},
+            )
         await self.typesense.delete_message(message_id=message_id)
         await self.dragonfly.invalidate_message_owner_cache(message_id)
         await self.cleanup_jobs.enqueue_message_delete_cleanup(message_id=message_id)
@@ -1055,4 +1092,74 @@ class MessageService:
         )
         attachment.transcription = transcription
         await message.save()
+        return self._serialize_message(message)
+
+    async def update_reaction(
+        self,
+        *,
+        message_id: str,
+        data: MessageReactionUpdate,
+        user_id: str,
+    ) -> MessageResponse:
+        message = await self._get_message_or_404(message_id)
+        if message.is_deleted:
+            raise HTTPException(status_code=422, detail="Message is deleted")
+        room_id = linked_document_id(message.room)
+        await self.room_service.get_for_user(room_id, user_id)
+
+        next_reactions: list[MessageReaction] = []
+        removed_same = False
+        for reaction in message.reactions:
+            user_ids = [
+                current_user_id
+                for current_user_id in reaction.user_ids
+                if current_user_id != user_id
+            ]
+            if reaction.emoji == data.emoji:
+                if len(user_ids) != len(reaction.user_ids):
+                    removed_same = True
+                if user_ids:
+                    next_reactions.append(
+                        MessageReaction(emoji=reaction.emoji, user_ids=user_ids)
+                    )
+                continue
+            if user_ids:
+                next_reactions.append(
+                    MessageReaction(emoji=reaction.emoji, user_ids=user_ids)
+                )
+
+        if not removed_same:
+            target = next(
+                (
+                    reaction
+                    for reaction in next_reactions
+                    if reaction.emoji == data.emoji
+                ),
+                None,
+            )
+            if target is None:
+                next_reactions.append(
+                    MessageReaction(emoji=data.emoji, user_ids=[user_id])
+                )
+            else:
+                target.user_ids.append(user_id)
+
+        message.reactions = next_reactions
+        await message.save()
+        await self.dragonfly.publish_room_event(
+            room_id,
+            {
+                "type": "chat.message.reaction.updated",
+                "payload": {
+                    "room_id": room_id,
+                    "message_id": message_id,
+                    "user_id": user_id,
+                    "emoji": data.emoji,
+                    "reactions": [
+                        reaction.model_dump() for reaction in message.reactions
+                    ],
+                    "ts": int(datetime.now(UTC).timestamp()),
+                },
+            },
+        )
         return self._serialize_message(message)

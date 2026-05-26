@@ -127,6 +127,24 @@ class S3Service:
             content_type=AVATAR_CONTENT_TYPE,
         )
 
+    async def upload_room_avatar(
+        self,
+        room_id: str,
+        file: UploadFile,
+    ) -> str | None:
+        if file.content_type not in CONTENT_TYPE_AVATAR:
+            return None
+        avatar = await self._optimize_avatar(file)
+        if not avatar:
+            return None
+        object_name = f"rooms/{room_id}/{uuid.uuid4()}"
+        return await self._upload_bytes(
+            bucket=settings.s3_bucket_avatars,
+            object_name=object_name,
+            data=avatar,
+            content_type=AVATAR_CONTENT_TYPE,
+        )
+
     async def upload_message_attachment(
         self,
         room_id: str,
