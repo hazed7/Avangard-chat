@@ -3,7 +3,13 @@ from typing import List, Optional
 
 from pydantic import BaseModel, ConfigDict, Field
 
-from app.modules.messages.model import Attachment, Message
+from app.modules.messages.model import (
+    Attachment,
+    AttachmentKind,
+    Message,
+    MessageReaction,
+    MessageType,
+)
 from app.platform.persistence.links import (
     linked_document_id,
     optional_linked_document_id,
@@ -27,11 +33,23 @@ class MessageForward(BaseModel):
     target_room_id: str
 
 
+class MessageReactionUpdate(BaseModel):
+    emoji: str = Field(min_length=1, max_length=16)
+
+
 class AttachmentResponse(BaseModel):
     id: str
     name: str
     content_type: str
+    kind: AttachmentKind
+    duration_ms: int | None
     transcription: str | None
+
+
+class MessageReactionResponse(BaseModel):
+    emoji: str
+    user_ids: list[str]
+    count: int
 
 
 class MessageResponse(BaseModel):
@@ -40,6 +58,9 @@ class MessageResponse(BaseModel):
     room_id: str
     sender_id: str
     text: str = Field(min_length=1, max_length=5000)
+    message_type: MessageType
+    mentioned_user_ids: list[str]
+    reactions: list[MessageReactionResponse]
     is_edited: bool
     edited_at: Optional[datetime] = None
     is_deleted: bool
@@ -78,7 +99,17 @@ def map_attachment(attachment: Attachment) -> AttachmentResponse:
         id=attachment.id,
         name=attachment.filename,
         content_type=attachment.content_type,
+        kind=attachment.kind,
+        duration_ms=attachment.duration_ms,
         transcription=attachment.transcription,
+    )
+
+
+def map_reaction(reaction: MessageReaction) -> MessageReactionResponse:
+    return MessageReactionResponse(
+        emoji=reaction.emoji,
+        user_ids=reaction.user_ids,
+        count=len(reaction.user_ids),
     )
 
 
@@ -89,6 +120,9 @@ def serialize_message_response(message: Message, *, text: str) -> MessageRespons
             "room_id": linked_document_id(message.room),
             "sender_id": linked_document_id(message.sender),
             "text": text,
+            "message_type": message.message_type,
+            "mentioned_user_ids": message.mentioned_user_ids,
+            "reactions": [map_reaction(reaction) for reaction in message.reactions],
             "is_edited": message.is_edited,
             "edited_at": message.edited_at,
             "is_deleted": message.is_deleted,

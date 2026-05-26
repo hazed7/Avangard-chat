@@ -3,11 +3,13 @@ import base64
 import hashlib
 import json
 import os
+import re
 from binascii import Error as BinasciiError
 from datetime import UTC, datetime
 from time import time
 
 from aiohttp import ClientResponse
+from beanie.odm.operators.find.comparison import In
 from bson import ObjectId
 from bson.errors import InvalidId
 from cryptography.exceptions import InvalidTag
@@ -16,12 +18,13 @@ from fastapi import HTTPException, UploadFile
 from pymongo.errors import PyMongoError
 
 from app.modules.ai_assist.service import AIAssistService
-from app.modules.messages.model import Attachment, Message
+from app.modules.messages.model import Attachment, Message, MessageReaction
 from app.modules.messages.schemas import (
     MarkRoomReadResponse,
     MessageCreate,
     MessageCursorPageResponse,
     MessageForward,
+    MessageReactionUpdate,
     MessageResponse,
     MessageUpdate,
     RoomUnreadCount,
@@ -47,9 +50,12 @@ from app.platform.security.message_crypto import MessageCrypto
 
 logger = get_logger("audit")
 DELETED_MESSAGE_TEXT = "[deleted]"
+VOICE_MESSAGE_PLACEHOLDER = " "
+VOICE_MESSAGE_PREVIEW = "[Voice message]"
 MAX_MARK_ROOM_READ_EVENT_IDS = 1000
 CURSOR_AAD = b"message-cursor:v1"
 CURSOR_NONCE_BYTES = 12
+MENTION_PATTERN = re.compile(r"(?<![A-Za-z0-9_.-])@([A-Za-z0-9_.-]+)")
 MESSAGE_WRITE_ERRORS = (
     HTTPException,
     PyMongoError,
@@ -134,6 +140,29 @@ class MessageService:
             },
         )
 
+    async def _extract_mentioned_user_ids(
+        self,
+        *,
+        text: str,
+        room: ChatRoom,
+    ) -> list[str]:
+        usernames = self._dedupe_preserve_order(MENTION_PATTERN.findall(text))
+        if not usernames:
+            return []
+        users = await User.find(In(User.username, usernames)).to_list()
+        users_by_username = {user.username: str(user.id) for user in users}
+        room_member_ids = set(self._room_member_ids(room))
+        mentioned_user_ids: list[str] = []
+        for username in usernames:
+            user_id = users_by_username.get(username)
+            if user_id and user_id in room_member_ids:
+                mentioned_user_ids.append(user_id)
+        return mentioned_user_ids
+
+    @staticmethod
+    def _dedupe_preserve_order(items: list[str]) -> list[str]:
+        return list(dict.fromkeys(items))
+
     def _decrypt_text(self, message: Message) -> str:
         return self.message_crypto.decrypt(
             ciphertext=message.text_ciphertext,
@@ -148,6 +177,8 @@ class MessageService:
     ) -> MessageResponse:
         if message.is_deleted:
             decrypted_text = DELETED_MESSAGE_TEXT
+        elif message.message_type == "voice":
+            decrypted_text = VOICE_MESSAGE_PREVIEW
         else:
             decrypted_text = text if text is not None else self._decrypt_text(message)
         return serialize_message_response(message, text=decrypted_text)
@@ -266,6 +297,30 @@ class MessageService:
                 },
             },
         )
+
+    @staticmethod
+    def _is_audio_content_type(content_type: str | None) -> bool:
+        return isinstance(content_type, str) and content_type.startswith("audio/")
+
+    async def _build_room_preview(
+        self,
+        *,
+        room: ChatRoom,
+        sender_id: str,
+        text: str,
+        message_type: str,
+        duration_ms: int | None = None,
+    ) -> str:
+        if message_type == "voice":
+            preview = VOICE_MESSAGE_PREVIEW
+        else:
+            preview = text.replace("\n", " ")[:60]
+        if room.is_group:
+            sender = await User.find_one(User.id == sender_id)
+            if sender:
+                sender_display = sender.full_name or sender.username
+                preview = f"{sender_display}: {preview}"
+        return preview
 
     async def _index_message(self, message: Message, *, text: str) -> None:
         await self.typesense.upsert_message(
@@ -407,12 +462,30 @@ class MessageService:
             raise
 
     async def _send_encrypted(
-        self, message_encrypted: Message, room: ChatRoom, sender_id: str, text: str
+        self,
+        message_encrypted: Message,
+        room: ChatRoom,
+        sender_id: str,
+        text: str,
     ) -> MessageResponse:
         await message_encrypted.insert()
+        preview = await self._build_room_preview(
+            room=room,
+            sender_id=sender_id,
+            text=text,
+            message_type=message_encrypted.message_type,
+            duration_ms=message_encrypted.attachments[0].duration_ms
+            if message_encrypted.attachments
+            else None,
+        )
         await ChatRoom.get_motor_collection().update_one(
             {"_id": room.id},
-            {"$set": {"last_message_at": message_encrypted.created_at}},
+            {
+                "$set": {
+                    "last_message_at": message_encrypted.created_at,
+                    "last_message_preview": preview,
+                }
+            },
         )
         await self._cleanup_typesense(message_encrypted, room, sender_id, text)
         logger.info(
@@ -438,6 +511,8 @@ class MessageService:
                     filename=attachment.filename,
                     object_path=object_path,
                     content_type=attachment.content_type,
+                    kind=attachment.kind,
+                    duration_ms=attachment.duration_ms,
                     transcription=attachment.transcription,
                 )
             )
@@ -460,10 +535,83 @@ class MessageService:
             text_nonce=encrypted.nonce,
             text_key_id=encrypted.key_id,
             text_aad=encrypted.aad,
+            message_type="text",
+            mentioned_user_ids=await self._extract_mentioned_user_ids(
+                text=data.text,
+                room=room,
+            ),
             read_by=[sender],
             created_at=created_at,
         )
         return await self._send_encrypted(message, room, sender_id, data.text)
+
+    async def send_voice_message(
+        self,
+        *,
+        room_id: str,
+        duration_ms: int,
+        file: UploadFile,
+        sender_id: str,
+    ) -> MessageResponse:
+        if not self._is_audio_content_type(file.content_type):
+            raise HTTPException(
+                status_code=422,
+                detail="Voice message must be an audio file",
+            )
+
+        room = await self.room_service.get_for_user(room_id, sender_id)
+        sender = await self._get_user_or_404(sender_id)
+        upload_limit = get_attachment_upload_limit_bytes(file.content_type)
+        if (
+            upload_limit is not None
+            and file.size is not None
+            and file.size > upload_limit
+        ):
+            raise HTTPException(status_code=422, detail="File too large")
+
+        object_path = await self.s3_service.upload_message_attachment(
+            room_id=str(room.id),
+            file=file,
+        )
+        if not object_path:
+            raise HTTPException(
+                status_code=422,
+                detail="Voice message format not supported",
+            )
+
+        created_at = datetime.now(UTC)
+        encrypted = self._encrypt_text(
+            text=VOICE_MESSAGE_PLACEHOLDER,
+            room_id=str(room.id),
+            sender_id=sender.id,
+            created_at=created_at,
+        )
+        message = Message(
+            room=room,
+            sender=sender,
+            text_ciphertext=encrypted.ciphertext,
+            text_nonce=encrypted.nonce,
+            text_key_id=encrypted.key_id,
+            text_aad=encrypted.aad,
+            message_type="voice",
+            read_by=[sender],
+            created_at=created_at,
+            attachments=[
+                Attachment(
+                    filename=file.filename,
+                    object_path=object_path,
+                    content_type=file.content_type,
+                    kind="voice",
+                    duration_ms=duration_ms,
+                )
+            ],
+        )
+        return await self._send_encrypted(
+            message,
+            room,
+            sender_id,
+            VOICE_MESSAGE_PLACEHOLDER,
+        )
 
     async def get_history(
         self,
@@ -512,6 +660,11 @@ class MessageService:
                 status_code=400,
                 detail="Deleted messages cannot be edited",
             )
+        if message.message_type == "voice":
+            raise HTTPException(
+                status_code=422,
+                detail="Voice messages cannot be edited",
+            )
 
         previous_state = self._capture_edit_state(message)
         previous_text = self._decrypt_text(message)
@@ -522,10 +675,17 @@ class MessageService:
             sender_id=linked_document_id(message.sender),
             created_at=message.created_at,
         )
+        room = await self.room_service.get_for_user(
+            linked_document_id(message.room), user_id
+        )
         message.text_ciphertext = encrypted.ciphertext
         message.text_nonce = encrypted.nonce
         message.text_key_id = encrypted.key_id
         message.text_aad = encrypted.aad
+        message.mentioned_user_ids = await self._extract_mentioned_user_ids(
+            text=data.text,
+            room=room,
+        )
         message.is_edited = True
         message.edited_at = datetime.now(UTC)
         await message.save()
@@ -579,6 +739,10 @@ class MessageService:
             message.attachments = []
             message.is_deleted = True
             await message.save()
+            await ChatRoom.get_motor_collection().update_one(
+                {"_id": message.room.ref.id},
+                {"$pull": {"pinned_messages": {"message_id": message_id}}},
+            )
         await self.typesense.delete_message(message_id=message_id)
         await self.dragonfly.invalidate_message_owner_cache(message_id)
         await self.cleanup_jobs.enqueue_message_delete_cleanup(message_id=message_id)
@@ -778,6 +942,11 @@ class MessageService:
         await self._ensure_message_owner(message, user_id)
         if message.is_deleted:
             raise HTTPException(status_code=422, detail="Message is deleted")
+        if message.message_type == "voice":
+            raise HTTPException(
+                status_code=422,
+                detail="Voice messages cannot have extra attachments",
+            )
         upload_limit = get_attachment_upload_limit_bytes(file.content_type)
         if (
             upload_limit is not None
@@ -798,6 +967,7 @@ class MessageService:
                 filename=file.filename,
                 object_path=object_path,
                 content_type=file.content_type,
+                kind="file",
             )
         )
         await message.save()
@@ -855,6 +1025,7 @@ class MessageService:
                 text_nonce=encrypted.nonce,
                 text_key_id=encrypted.key_id,
                 text_aad=encrypted.aad,
+                message_type=message.message_type,
                 read_by=[sender],
                 created_at=created_at,
                 attachments=await self._copy_attachments(
@@ -902,6 +1073,11 @@ class MessageService:
         )
         if not attachment:
             raise HTTPException(status_code=404, detail="Attachment not found")
+        if not self._is_audio_content_type(attachment.content_type):
+            raise HTTPException(
+                status_code=422,
+                detail="Only audio attachments can be transcribed",
+            )
 
         if attachment.transcription:
             return self._serialize_message(message)
@@ -916,4 +1092,74 @@ class MessageService:
         )
         attachment.transcription = transcription
         await message.save()
+        return self._serialize_message(message)
+
+    async def update_reaction(
+        self,
+        *,
+        message_id: str,
+        data: MessageReactionUpdate,
+        user_id: str,
+    ) -> MessageResponse:
+        message = await self._get_message_or_404(message_id)
+        if message.is_deleted:
+            raise HTTPException(status_code=422, detail="Message is deleted")
+        room_id = linked_document_id(message.room)
+        await self.room_service.get_for_user(room_id, user_id)
+
+        next_reactions: list[MessageReaction] = []
+        removed_same = False
+        for reaction in message.reactions:
+            user_ids = [
+                current_user_id
+                for current_user_id in reaction.user_ids
+                if current_user_id != user_id
+            ]
+            if reaction.emoji == data.emoji:
+                if len(user_ids) != len(reaction.user_ids):
+                    removed_same = True
+                if user_ids:
+                    next_reactions.append(
+                        MessageReaction(emoji=reaction.emoji, user_ids=user_ids)
+                    )
+                continue
+            if user_ids:
+                next_reactions.append(
+                    MessageReaction(emoji=reaction.emoji, user_ids=user_ids)
+                )
+
+        if not removed_same:
+            target = next(
+                (
+                    reaction
+                    for reaction in next_reactions
+                    if reaction.emoji == data.emoji
+                ),
+                None,
+            )
+            if target is None:
+                next_reactions.append(
+                    MessageReaction(emoji=data.emoji, user_ids=[user_id])
+                )
+            else:
+                target.user_ids.append(user_id)
+
+        message.reactions = next_reactions
+        await message.save()
+        await self.dragonfly.publish_room_event(
+            room_id,
+            {
+                "type": "chat.message.reaction.updated",
+                "payload": {
+                    "room_id": room_id,
+                    "message_id": message_id,
+                    "user_id": user_id,
+                    "emoji": data.emoji,
+                    "reactions": [
+                        reaction.model_dump() for reaction in message.reactions
+                    ],
+                    "ts": int(datetime.now(UTC).timestamp()),
+                },
+            },
+        )
         return self._serialize_message(message)

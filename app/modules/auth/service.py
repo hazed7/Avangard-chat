@@ -236,3 +236,16 @@ class AuthService:
 
     async def set_user_access_cutoff(self, user_id: str) -> None:
         await self.dragonfly.set_user_cutoff(user_id, iat=now_unix())
+
+    async def change_password(
+        self,
+        user_id: str,
+        old_password: str,
+        new_password: str,
+    ) -> None:
+        user = await self._get_user_by_id(user_id)
+        if not verify_password_or_dummy(old_password, user.password_hash):
+            raise HTTPException(status_code=401, detail="Invalid password")
+        user.password_hash = hash_password(new_password)
+        await user.save()
+        await self.revoke_all_user_sessions(user_id)

@@ -1,4 +1,4 @@
-from fastapi import APIRouter, Depends, Query, UploadFile
+from fastapi import APIRouter, Depends, File, Form, Query, UploadFile
 from starlette.responses import StreamingResponse
 
 from app.modules.messages.schemas import (
@@ -6,6 +6,7 @@ from app.modules.messages.schemas import (
     MessageCreate,
     MessageCursorPageResponse,
     MessageForward,
+    MessageReactionUpdate,
     MessageResponse,
     MessageUpdate,
     UnreadCountsResponse,
@@ -36,6 +37,26 @@ async def send_message(
     message_service: MessageService = Depends(get_message_service),
 ):
     return await message_service.send(data=data, sender_id=user["sub"])
+
+
+@router.post(
+    "/voice",
+    response_model=MessageResponse,
+    responses=error_responses(401, 403, 404, 422),
+)
+async def send_voice_message(
+    room_id: str = Form(...),
+    duration_ms: int = Form(..., gt=0),
+    file: UploadFile = File(...),
+    user: dict = Depends(verify_token),
+    message_service: MessageService = Depends(get_message_service),
+):
+    return await message_service.send_voice_message(
+        room_id=room_id,
+        duration_ms=duration_ms,
+        file=file,
+        sender_id=user["sub"],
+    )
 
 
 @router.get(
@@ -226,5 +247,23 @@ async def get_audio_message_transcription(
     return await message_service.get_audio_message_transcription(
         message_id=message_id,
         attachment_id=attachment_id,
+        user_id=user["sub"],
+    )
+
+
+@router.post(
+    "/{message_id}/reaction",
+    response_model=MessageResponse,
+    responses=error_responses(400, 401, 403, 404, 422),
+)
+async def update_message_reaction(
+    message_id: str,
+    data: MessageReactionUpdate,
+    user: dict = Depends(verify_token),
+    message_service: MessageService = Depends(get_message_service),
+):
+    return await message_service.update_reaction(
+        message_id=message_id,
+        data=data,
         user_id=user["sub"],
     )

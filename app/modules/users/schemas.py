@@ -1,7 +1,7 @@
 from datetime import datetime
 from typing import Optional
 
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 from app.modules.users.model import User
 
@@ -28,3 +28,7 @@ def serialize_user_response(user: User) -> UserResponse:
             "last_time_online": user.last_time_online,
         }
     )
+
+
+class UserUpdateRequest(BaseModel):
+    full_name: str = Field(min_length=1, max_length=120)

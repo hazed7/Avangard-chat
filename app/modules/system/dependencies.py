@@ -128,22 +128,24 @@ def get_rate_limit_service(
     return RateLimitService(dragonfly=dragonfly)
 
 
+def get_s3_service() -> S3Service:
+    return get_s3_service_singleton()
+
+
 def get_room_service(
     dragonfly: DragonflyService = Depends(get_dragonfly_service),
     typesense: TypesenseService = Depends(get_typesense_service),
     unread_counters: UnreadCounterService = Depends(get_unread_counter_service),
     cleanup_jobs: CleanupJobService = Depends(get_cleanup_job_service),
+    s3_service: S3Service = Depends(get_s3_service),
 ) -> RoomService:
     return RoomService(
         dragonfly=dragonfly,
         typesense=typesense,
         unread_counters=unread_counters,
         cleanup_jobs=cleanup_jobs,
+        s3_service=s3_service,
     )
-
-
-def get_s3_service() -> S3Service:
-    return get_s3_service_singleton()
 
 
 def get_message_service(

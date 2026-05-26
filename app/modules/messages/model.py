@@ -5,9 +5,13 @@ from uuid import uuid4
 from beanie import Document, Link
 from pydantic import BaseModel, Field
 from pymongo import DESCENDING, IndexModel
+from typing_extensions import Literal
 
 from app.modules.rooms.model import ChatRoom
 from app.modules.users.model import User
+
+AttachmentKind = Literal["file", "voice"]
+MessageType = Literal["text", "voice"]
 
 
 class Attachment(BaseModel):
@@ -15,7 +19,14 @@ class Attachment(BaseModel):
     filename: str
     object_path: str
     content_type: str
+    kind: AttachmentKind = "file"
+    duration_ms: int | None = None
     transcription: Optional[str] = None
+
+
+class MessageReaction(BaseModel):
+    emoji: str
+    user_ids: List[str] = Field(default_factory=list)
 
 
 class Message(Document):
@@ -25,6 +36,9 @@ class Message(Document):
     text_nonce: str
     text_key_id: str
     text_aad: str
+    message_type: MessageType = "text"
+    mentioned_user_ids: List[str] = Field(default_factory=list)
+    reactions: List[MessageReaction] = Field(default_factory=list)
     is_edited: bool = False
     edited_at: Optional[datetime] = None
     is_deleted: bool = False

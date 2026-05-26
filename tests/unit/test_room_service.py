@@ -49,6 +49,7 @@ def _service() -> RoomService:
         typesense=object(),
         unread_counters=object(),
         cleanup_jobs=object(),
+        s3_service=object(),
     )
 
 

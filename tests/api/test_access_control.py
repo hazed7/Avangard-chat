@@ -231,6 +231,7 @@ def test_users_can_only_list_their_own_rooms(client: TestClient):
     own_rooms = own_rooms_response.json()
     assert len(own_rooms["groups"]) == 1
     assert own_rooms["dms"] == []
+    assert own_rooms["archived"] == []
     assert own_rooms["next_cursor"] is None
 
     other_rooms_response = client.get(
