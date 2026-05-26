@@ -1,4 +1,5 @@
 from fastapi import APIRouter, Depends, File, HTTPException, Query, UploadFile
+from starlette.responses import StreamingResponse
 
 from app.modules.calls.service import CallService
 from app.modules.messages.service import MessageService
@@ -22,6 +23,8 @@ from app.modules.system.dependencies import (
     get_room_service,
     verify_token,
 )
+from app.modules.system.streaming_utils import stream_with_cleanup
+from app.platform.backends.s3.service import s3_settings
 from app.platform.http.errors import error_responses
 from app.platform.http.schemas import OperationOkResponse
 from app.platform.persistence.links import linked_document_id
@@ -110,6 +113,29 @@ async def update_room_avatar(
     )
     preference = await room_service.get_preference_for_user(room_id, user["sub"])
     return serialize_chat_room_response(room, preference)
+
+
+@router.get(
+    "/{room_id}/avatar",
+    responses=error_responses(400, 401, 403, 404),
+)
+async def get_room_avatar(
+    room_id: str,
+    user: dict = Depends(verify_token),
+    room_service: RoomService = Depends(get_room_service),
+):
+    room = await room_service.get_for_user(room_id, user["sub"])
+    if not room.avatar_object_path:
+        raise HTTPException(status_code=400, detail="Avatar is absent")
+
+    response = await room_service.s3_service.download_file(
+        s3_settings.bucket_avatars,
+        room.avatar_object_path,
+    )
+    return StreamingResponse(
+        content=stream_with_cleanup(response=response),
+        media_type=response.headers.get("content-type", "application/octet-stream"),
+    )
 
 
 @router.delete(

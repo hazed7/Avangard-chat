@@ -20,6 +20,18 @@ class WsMessageCreatedEvent(BaseModel):
     payload: MessageResponse
 
 
+class WsMessageDeletedPayload(BaseModel):
+    room_id: str
+    message_id: str
+    user_id: str
+    ts: int
+
+
+class WsMessageDeletedEvent(BaseModel):
+    type: Literal["chat.message.deleted"] = "chat.message.deleted"
+    payload: WsMessageDeletedPayload
+
+
 class WsPingPayload(BaseModel):
     ts: int
 

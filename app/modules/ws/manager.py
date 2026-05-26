@@ -20,7 +20,7 @@ logger = get_logger("ws.manager")
 
 @dataclass(slots=True)
 class ConnectionContext:
-    room_id: str
+    room_id: str | None
     user_id: str
     connection_id: str
     token_exp: int = 0
@@ -32,6 +32,7 @@ class ConnectionManager:
     def __init__(self, dragonfly: DragonflyService):
         self._dragonfly = dragonfly
         self._rooms: dict[str, list[WebSocket]] = defaultdict(list)
+        self._users: dict[str, list[WebSocket]] = defaultdict(list)
         self._context_by_socket: dict[WebSocket, ConnectionContext] = {}
         self._listener_task: asyncio.Task[None] | None = None
 
@@ -51,6 +52,7 @@ class ConnectionManager:
                 await self._listener_task
             self._listener_task = None
         self._rooms.clear()
+        self._users.clear()
         self._context_by_socket.clear()
 
     async def connect(
@@ -83,6 +85,30 @@ class ConnectionManager:
             connection_id=connection_id,
         )
 
+    async def connect_user(
+        self,
+        websocket: WebSocket,
+        user_id: str,
+        auth_payload: dict[str, Any],
+        *,
+        subprotocol: str | None = None,
+    ) -> None:
+        await websocket.accept(subprotocol=subprotocol)
+        connection_id = uuid4().hex
+        self._users[user_id].append(websocket)
+        self._context_by_socket[websocket] = ConnectionContext(
+            room_id=None,
+            user_id=user_id,
+            connection_id=connection_id,
+            token_exp=int(auth_payload.get("exp", 0)),
+            token_iat=int(auth_payload.get("iat", 0)),
+            token_jti=(
+                str(auth_payload["jti"])
+                if auth_payload.get("jti") is not None
+                else None
+            ),
+        )
+
     async def ensure_connection_authorized(self, websocket: WebSocket) -> bool:
         context = self._context_by_socket.get(websocket)
         if not context:
@@ -91,7 +117,7 @@ class ConnectionManager:
 
     async def touch(self, websocket: WebSocket) -> None:
         context = self._context_by_socket.get(websocket)
-        if not context:
+        if not context or context.room_id is None:
             return
         await self._dragonfly.touch_ws_presence(
             room_id=context.room_id,
@@ -116,10 +142,34 @@ class ConnectionManager:
             connection_id=context.connection_id,
         )
 
+    async def disconnect_user(self, websocket: WebSocket) -> None:
+        context = self._context_by_socket.pop(websocket, None)
+        if not context:
+            return
+
+        user_connections = self._users.get(context.user_id)
+        if user_connections:
+            with contextlib.suppress(ValueError):
+                user_connections.remove(websocket)
+            if not user_connections:
+                self._users.pop(context.user_id, None)
+
     async def publish(self, room_id: str, message: dict[str, Any]) -> None:
         await self._dragonfly.publish_room_event(room_id, message)
 
     async def _is_connection_authorized(self, context: ConnectionContext) -> bool:
+        if not await self._is_token_authorized(context):
+            return False
+
+        if context.room_id is None:
+            return True
+
+        return await self._user_has_room_access(
+            room_id=context.room_id,
+            user_id=context.user_id,
+        )
+
+    async def _is_token_authorized(self, context: ConnectionContext) -> bool:
         if context.token_exp <= now_unix():
             return False
 
@@ -135,24 +185,26 @@ class ConnectionManager:
         user = await User.find_one(User.id == context.user_id)
         if not user:
             return False
+        return True
 
-        room = await ChatRoom.get(context.room_id)
+    async def _user_has_room_access(self, *, room_id: str, user_id: str) -> bool:
+        room = await ChatRoom.get(room_id)
         if not room:
             return False
 
         cached_access = await self._dragonfly.get_room_access_cache(
-            context.room_id,
-            context.user_id,
+            room_id,
+            user_id,
         )
         if cached_access is not None:
             return cached_access
 
-        allowed = linked_document_id(room.created_by) == context.user_id or any(
-            linked_document_id(member) == context.user_id for member in room.members
+        allowed = linked_document_id(room.created_by) == user_id or any(
+            linked_document_id(member) == user_id for member in room.members
         )
         await self._dragonfly.set_room_access_cache(
-            context.room_id,
-            context.user_id,
+            room_id,
+            user_id,
             allowed,
         )
         return allowed
@@ -182,6 +234,7 @@ class ConnectionManager:
     async def _fanout_local(self, room_id: str, message: dict[str, Any]) -> None:
         dead_connections: list[WebSocket] = []
         unauthorized_connections: list[WebSocket] = []
+        sent_connections: set[WebSocket] = set()
         for websocket in list(self._rooms.get(room_id, [])):
             try:
                 is_authorized = await self.ensure_connection_authorized(websocket)
@@ -192,14 +245,55 @@ class ConnectionManager:
                 continue
             try:
                 await websocket.send_json(message)
+                sent_connections.add(websocket)
             except (RuntimeError, WebSocketDisconnect):
                 dead_connections.append(websocket)
 
+        for user_id, sockets in list(self._users.items()):
+            for websocket in list(sockets):
+                if websocket in sent_connections:
+                    continue
+
+                context = self._context_by_socket.get(websocket)
+                if not context:
+                    dead_connections.append(websocket)
+                    continue
+
+                try:
+                    is_authorized = await self._is_token_authorized(
+                        context,
+                    ) and await self._user_has_room_access(
+                        room_id=room_id,
+                        user_id=user_id,
+                    )
+                except HTTPException:
+                    is_authorized = False
+
+                if not is_authorized:
+                    unauthorized_connections.append(websocket)
+                    continue
+
+                try:
+                    await websocket.send_json(message)
+                    sent_connections.add(websocket)
+                except (RuntimeError, WebSocketDisconnect):
+                    dead_connections.append(websocket)
+
         for websocket in unauthorized_connections:
-            await self._close_unauthorized_socket(websocket, room_id)
+            context = self._context_by_socket.get(websocket)
+            if context and context.room_id is None:
+                with contextlib.suppress(RuntimeError, WebSocketDisconnect):
+                    await websocket.close(code=1008)
+                await self.disconnect_user(websocket)
+            else:
+                await self._close_unauthorized_socket(websocket, room_id)
 
         for websocket in dead_connections:
-            await self.disconnect(websocket, room_id)
+            context = self._context_by_socket.get(websocket)
+            if context and context.room_id is None:
+                await self.disconnect_user(websocket)
+            else:
+                await self.disconnect(websocket, room_id)
 
 
 manager = ConnectionManager(dragonfly=get_dragonfly_service_singleton())

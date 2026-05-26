@@ -516,11 +516,19 @@ class MessageService:
             str(room.id),
             str(message_encrypted.id),
         )
-        return await self._serialize_message(
+        response = await self._serialize_message(
             message_encrypted,
             text=text,
             viewer_id=sender_id,
         )
+        await self.dragonfly.publish_room_event(
+            str(room.id),
+            {
+                "type": "chat.message.created",
+                "payload": response.model_dump(mode="json"),
+            },
+        )
+        return response
 
     async def _copy_attachments(
         self, attachments: list[Attachment], room_id: str
@@ -773,6 +781,18 @@ class MessageService:
         await self.typesense.delete_message(message_id=message_id)
         await self.dragonfly.invalidate_message_owner_cache(message_id)
         await self.cleanup_jobs.enqueue_message_delete_cleanup(message_id=message_id)
+        await self.dragonfly.publish_room_event(
+            room_id,
+            {
+                "type": "chat.message.deleted",
+                "payload": {
+                    "room_id": room_id,
+                    "message_id": message_id,
+                    "user_id": user_id,
+                    "ts": int(datetime.now(UTC).timestamp()),
+                },
+            },
+        )
         logger.info(
             "event=message.delete user_id=%s message_id=%s already_deleted=%s",
             user_id,

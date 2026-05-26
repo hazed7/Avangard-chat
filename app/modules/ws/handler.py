@@ -353,7 +353,6 @@ async def handle_room_chat(
                     data=message_input,
                     sender_id=user_id,
                 )
-                message_payload = message
                 typing_cleared = await dragonfly.set_ws_typing_state(
                     room_id=room_id,
                     user_id=user_id,
@@ -373,10 +372,6 @@ async def handle_room_chat(
                     user_id=user_id,
                     idempotency_key=event.payload.idempotency_key,
                     message_id=str(message.id),
-                )
-                await manager.publish(
-                    room_id,
-                    jsonable_encoder(WsMessageCreatedEvent(payload=message_payload)),
                 )
                 message_id = str(message.id)
                 await manager.publish(
@@ -441,3 +436,80 @@ async def handle_room_chat(
                 ),
             )
         await manager.disconnect(websocket, room_id)
+
+
+async def handle_user_events(
+    websocket: WebSocket,
+    rate_limit_service: RateLimitService,
+    dragonfly: DragonflyService,
+) -> None:
+    subprotocols = list(websocket.scope.get("subprotocols", []))
+    client_ip = resolve_client_ip(
+        peer_ip=websocket.client.host if websocket.client else None,
+        headers=websocket.headers,
+        proxy=settings.proxy,
+    )
+
+    try:
+        await rate_limit_service.enforce_ws_handshake(ip=client_ip)
+        _require_chat_subprotocol(subprotocols)
+        token = _extract_bearer_token(subprotocols)
+        payload = await validate_access_token(token=token, dragonfly=dragonfly)
+    except HTTPException as exc:
+        code = 1002 if exc.status_code == 400 else 1008
+        await websocket.close(code=code)
+        return
+
+    await manager.connect_user(
+        websocket,
+        payload["sub"],
+        payload,
+        subprotocol=CHAT_SUBPROTOCOL,
+    )
+    last_activity_at = monotonic()
+    try:
+        while True:
+            try:
+                data = await asyncio.wait_for(
+                    websocket.receive_json(),
+                    timeout=settings.ws.heartbeat_interval_seconds,
+                )
+            except TimeoutError:
+                idle_for = monotonic() - last_activity_at
+                if idle_for >= settings.ws.idle_timeout_seconds:
+                    await websocket.close(code=1001)
+                    break
+                await _send_ping(websocket)
+                continue
+
+            last_activity_at = monotonic()
+
+            if not await manager.ensure_connection_authorized(websocket):
+                await websocket.close(code=1008)
+                break
+
+            try:
+                event_type = data.get("type")
+            except AttributeError:
+                event_type = None
+
+            if event_type == "chat.pong":
+                try:
+                    WsPongEvent.model_validate(data)
+                except ValidationError:
+                    await _send_error(
+                        websocket,
+                        code="invalid_event",
+                        detail="Expected event: chat.pong",
+                    )
+                continue
+
+            await _send_error(
+                websocket,
+                code="invalid_event",
+                detail="Expected event: chat.pong",
+            )
+    except WebSocketDisconnect:
+        pass
+    finally:
+        await manager.disconnect_user(websocket)

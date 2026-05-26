@@ -173,6 +173,21 @@ class SummaryService:
                 status_code=502,
                 detail="AI summarizer returned an error",
             ) from exc
+        except openai.AuthenticationError as exc:
+            raise HTTPException(
+                status_code=503,
+                detail="AI summarizer authentication failed",
+            ) from exc
+        except openai.BadRequestError as exc:
+            raise HTTPException(
+                status_code=400,
+                detail="AI summarizer bad request",
+            ) from exc
+        except openai.APIStatusError as exc:
+            raise HTTPException(
+                status_code=exc.status_code,
+                detail=exc.message,
+            ) from exc
 
         summary = response.choices[0].message.content.strip()
         return summary, len(messages), was_capped, mode
