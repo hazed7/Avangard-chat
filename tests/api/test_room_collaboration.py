@@ -48,6 +48,20 @@ def test_owner_can_promote_admin_and_admin_can_manage_group_settings(
     assert avatar_response.status_code == 200
     assert avatar_response.json()["avatar_object_path"] is not None
 
+    delete_avatar_response = client.delete(
+        f"/room/{room['id']}/avatar",
+        headers=auth_headers(admin_candidate["access_token"]),
+    )
+    assert delete_avatar_response.status_code == 200
+    assert delete_avatar_response.json()["avatar_object_path"] is None
+
+    demote_response = client.delete(
+        f"/room/{room['id']}/admins/{admin_candidate['user']['id']}",
+        headers=auth_headers(owner["access_token"]),
+    )
+    assert demote_response.status_code == 200
+    assert admin_candidate["user"]["id"] not in demote_response.json()["admin_ids"]
+
 
 def test_non_admin_cannot_update_group_settings_or_invite(client: TestClient):
     owner = register_user(client, "collab-owner-2")
@@ -71,6 +85,13 @@ def test_non_admin_cannot_update_group_settings_or_invite(client: TestClient):
         headers=auth_headers(member["access_token"]),
     )
     assert invite_response.status_code == 403
+
+    add_member_response = client.post(
+        f"/room/{room['id']}/members",
+        headers=auth_headers(member["access_token"]),
+        json={"user_id": owner["user"]["id"]},
+    )
+    assert add_member_response.status_code == 403
 
 
 def test_admin_can_create_invite_and_user_can_join_by_token(client: TestClient):
@@ -98,12 +119,37 @@ def test_admin_can_create_invite_and_user_can_join_by_token(client: TestClient):
     assert invite_response.status_code == 200
     token = invite_response.json()["token"]
 
+    repeated_invite_response = client.post(
+        f"/room/{room['id']}/invite-link",
+        headers=auth_headers(admin["access_token"]),
+    )
+    assert repeated_invite_response.status_code == 200
+    assert repeated_invite_response.json()["token"] == token
+
     join_response = client.post(
         f"/room/join/{token}",
         headers=auth_headers(joiner["access_token"]),
     )
     assert join_response.status_code == 200
     assert joiner["user"]["id"] in join_response.json()["member_ids"]
+
+    repeat_join_response = client.post(
+        f"/room/join/{token}",
+        headers=auth_headers(joiner["access_token"]),
+    )
+    assert repeat_join_response.status_code == 200
+
+    revoke_response = client.delete(
+        f"/room/{room['id']}/invite-link",
+        headers=auth_headers(admin["access_token"]),
+    )
+    assert revoke_response.status_code == 200
+
+    invalid_join_response = client.post(
+        f"/room/join/{token}",
+        headers=auth_headers(owner["access_token"]),
+    )
+    assert invalid_join_response.status_code == 404
 
 
 def test_room_preferences_support_archive_and_mute(client: TestClient):
@@ -128,6 +174,20 @@ def test_room_preferences_support_archive_and_mute(client: TestClient):
     assert payload["groups"] == []
     assert len(payload["archived"]) == 1
     assert payload["archived"][0]["id"] == room["id"]
+
+    muted_until_response = client.patch(
+        f"/room/{room['id']}/preferences",
+        headers=auth_headers(owner["access_token"]),
+        json={
+            "mute_forever": False,
+            "muted_until": "2030-01-01T00:00:00Z",
+            "is_archived": False,
+        },
+    )
+    assert muted_until_response.status_code == 200
+    assert muted_until_response.json()["mute_forever"] is False
+    assert muted_until_response.json()["muted_until"] == "2030-01-01T00:00:00"
+    assert muted_until_response.json()["is_archived"] is False
 
 
 def test_pins_are_newest_first_capped_and_auto_unpinned_on_delete(client: TestClient):
@@ -179,6 +239,100 @@ def test_pins_are_newest_first_capped_and_auto_unpinned_on_delete(client: TestCl
     remaining_ids = [item["message"]["id"] for item in after_delete_response.json()]
     assert message_ids[-1] not in remaining_ids
 
+    unpin_response = client.delete(
+        f"/room/{room['id']}/pins/{message_ids[-2]}",
+        headers=auth_headers(member["access_token"]),
+    )
+    assert unpin_response.status_code == 200
+    assert all(
+        pin["message_id"] != message_ids[-2]
+        for pin in unpin_response.json().get("pinned_messages", [])
+    )
+
+
+def test_admin_can_add_and_remove_members_but_not_owner(client: TestClient):
+    owner = register_user(client, "member-owner")
+    admin = register_user(client, "member-admin")
+    joiner = register_user(client, "member-joiner")
+    room = create_room(
+        client,
+        owner["access_token"],
+        member_ids=[admin["user"]["id"]],
+        name="member-group",
+    )
+
+    promote_response = client.post(
+        f"/room/{room['id']}/admins",
+        headers=auth_headers(owner["access_token"]),
+        json={"user_id": admin["user"]["id"]},
+    )
+    assert promote_response.status_code == 200
+
+    add_member_response = client.post(
+        f"/room/{room['id']}/members",
+        headers=auth_headers(admin["access_token"]),
+        json={"user_id": joiner["user"]["id"]},
+    )
+    assert add_member_response.status_code == 200
+    assert joiner["user"]["id"] in add_member_response.json()["member_ids"]
+
+    remove_member_response = client.delete(
+        f"/room/{room['id']}/members/{joiner['user']['id']}",
+        headers=auth_headers(admin["access_token"]),
+    )
+    assert remove_member_response.status_code == 200
+    assert joiner["user"]["id"] not in remove_member_response.json()["member_ids"]
+
+    remove_owner_response = client.delete(
+        f"/room/{room['id']}/members/{owner['user']['id']}",
+        headers=auth_headers(admin["access_token"]),
+    )
+    assert remove_owner_response.status_code == 400
+
+    demote_owner_response = client.delete(
+        f"/room/{room['id']}/admins/{owner['user']['id']}",
+        headers=auth_headers(owner["access_token"]),
+    )
+    assert demote_owner_response.status_code == 400
+
+    promote_owner_response = client.post(
+        f"/room/{room['id']}/admins",
+        headers=auth_headers(owner["access_token"]),
+        json={"user_id": owner["user"]["id"]},
+    )
+    assert promote_owner_response.status_code == 200
+    assert promote_owner_response.json()["admin_ids"] == [admin["user"]["id"]]
+
+
+def test_room_listing_forbids_other_users_and_owner_can_delete_room(client: TestClient):
+    owner = register_user(client, "delete-owner")
+    other = register_user(client, "delete-other")
+    room = create_room(
+        client,
+        owner["access_token"],
+        member_ids=[],
+        name="delete-group",
+    )
+    create_message(client, owner["access_token"], room["id"], text="delete me")
+
+    forbidden_response = client.get(
+        f"/room/user/{owner['user']['id']}",
+        headers=auth_headers(other["access_token"]),
+    )
+    assert forbidden_response.status_code == 403
+
+    delete_response = client.delete(
+        f"/room/{room['id']}",
+        headers=auth_headers(owner["access_token"]),
+    )
+    assert delete_response.status_code == 200
+
+    get_deleted_response = client.get(
+        f"/room/{room['id']}",
+        headers=auth_headers(owner["access_token"]),
+    )
+    assert get_deleted_response.status_code == 404
+
 
 def test_mentions_and_reactions_are_persisted_on_messages(client: TestClient):
     owner = register_user(client, "mention-owner")
@@ -223,10 +377,37 @@ def test_mentions_and_reactions_are_persisted_on_messages(client: TestClient):
         {"emoji": "👍", "user_ids": [bob["user"]["id"]], "count": 1}
     ]
 
+    charlie_reaction = client.post(
+        f"/message/{message['id']}/reaction",
+        headers=auth_headers(charlie["access_token"]),
+        json={"emoji": "🔥"},
+    )
+    assert charlie_reaction.status_code == 200
+    assert charlie_reaction.json()["reactions"] == [
+        {"emoji": "👍", "user_ids": [bob["user"]["id"]], "count": 1},
+        {"emoji": "🔥", "user_ids": [charlie["user"]["id"]], "count": 1},
+    ]
+
+    bob_matches_existing_emoji = client.post(
+        f"/message/{message['id']}/reaction",
+        headers=auth_headers(bob["access_token"]),
+        json={"emoji": "🔥"},
+    )
+    assert bob_matches_existing_emoji.status_code == 200
+    assert bob_matches_existing_emoji.json()["reactions"] == [
+        {
+            "emoji": "🔥",
+            "user_ids": [charlie["user"]["id"], bob["user"]["id"]],
+            "count": 2,
+        }
+    ]
+
     toggle_off = client.post(
         f"/message/{message['id']}/reaction",
         headers=auth_headers(bob["access_token"]),
-        json={"emoji": "👍"},
+        json={"emoji": "🔥"},
     )
     assert toggle_off.status_code == 200
-    assert toggle_off.json()["reactions"] == []
+    assert toggle_off.json()["reactions"] == [
+        {"emoji": "🔥", "user_ids": [charlie["user"]["id"]], "count": 1}
+    ]
