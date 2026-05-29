@@ -1,9 +1,12 @@
 from datetime import datetime
-from typing import Optional
+from typing import Literal, Optional
 
 from pydantic import BaseModel, Field
 
 from app.modules.users.model import User
+
+MessagingPrivacy = Literal["everyone", "friends_only", "subscribers_and_friends"]
+ContactPrivacy = Literal["everyone", "friends_only"]
 
 
 class UserResponse(BaseModel):
@@ -32,3 +35,55 @@ def serialize_user_response(user: User) -> UserResponse:
 
 class UserUpdateRequest(BaseModel):
     full_name: str = Field(min_length=1, max_length=120)
+
+
+class UserPreferencesResponse(BaseModel):
+    privacy_messaging: MessagingPrivacy = "everyone"
+    privacy_group_invite: ContactPrivacy = "everyone"
+    privacy_calling: ContactPrivacy = "everyone"
+    bio: Optional[str] = None
+    status_emoji: Optional[str] = None
+
+
+class UserPreferencesUpdate(BaseModel):
+    privacy_messaging: Optional[MessagingPrivacy] = None
+    privacy_group_invite: Optional[ContactPrivacy] = None
+    privacy_calling: Optional[ContactPrivacy] = None
+    bio: Optional[str] = Field(None, max_length=256)
+    status_emoji: Optional[str] = Field(None, max_length=8)
+
+
+class FriendRequestResponse(BaseModel):
+    id: str
+    from_user_id: str
+    to_user_id: str
+    status: str
+    created_at: datetime
+    updated_at: datetime
+
+
+class FriendInfo(BaseModel):
+    user_id: str
+    username: str
+    full_name: str
+    avatar: Optional[str] = None
+    is_online: bool
+    since: datetime
+
+
+class BlockInfo(BaseModel):
+    user_id: str
+    username: str
+    full_name: str
+    avatar: Optional[str] = None
+    blocked_at: datetime
+
+
+def serialize_preferences(pref) -> UserPreferencesResponse:
+    return UserPreferencesResponse(
+        privacy_messaging=pref.privacy_messaging if pref else "everyone",
+        privacy_group_invite=pref.privacy_group_invite if pref else "everyone",
+        privacy_calling=pref.privacy_calling if pref else "everyone",
+        bio=pref.bio if pref else None,
+        status_emoji=pref.status_emoji if pref else None,
+    )
