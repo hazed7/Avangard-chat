@@ -33,6 +33,26 @@ def test_update_preferences(client: TestClient):
     assert data["privacy_messaging"] == "friends_only"
 
 
+def test_update_preferences_can_clear_profile_fields(client: TestClient):
+    user = register_user(client, "pref_clear")
+    set_resp = client.patch(
+        "/user/me/preferences",
+        headers=auth_headers(user["access_token"]),
+        json={"bio": "filled", "status_emoji": "🔥"},
+    )
+    assert set_resp.status_code == 200
+
+    clear_resp = client.patch(
+        "/user/me/preferences",
+        headers=auth_headers(user["access_token"]),
+        json={"bio": "", "status_emoji": ""},
+    )
+    assert clear_resp.status_code == 200
+    data = clear_resp.json()
+    assert data["bio"] is None
+    assert data["status_emoji"] is None
+
+
 def test_update_preferences_rejects_invalid_privacy_value(client: TestClient):
     user = register_user(client, "pref_invalid")
     resp = client.patch(

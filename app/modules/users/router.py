@@ -1,21 +1,27 @@
 from fastapi import APIRouter, Depends, HTTPException, Query, UploadFile
 from starlette.responses import StreamingResponse
 
+from app.modules.rooms.model import ChatRoom
 from app.modules.system.dependencies import (
     get_dragonfly_service,
     get_s3_service,
+    get_social_service,
     verify_token,
 )
 from app.modules.system.streaming_utils import stream_with_cleanup
 from app.modules.users.model import User
+from app.modules.users.preferences_model import UserPreferences
 from app.modules.users.schemas import (
+    UserProfileResponse,
     UserResponse,
     UserUpdateRequest,
     serialize_user_response,
 )
+from app.modules.users.social_service import SocialService
 from app.platform.backends.dragonfly.service import DragonflyService
 from app.platform.backends.s3.service import S3Service, s3_settings
 from app.platform.http.errors import error_responses
+from app.platform.persistence.links import linked_document_id
 
 router = APIRouter()
 
@@ -92,6 +98,73 @@ async def search_users(
         .to_list()
     )
     return [await _serialize_user_with_presence(user, dragonfly) for user in users]
+
+
+@router.get(
+    "/{user_id}/profile",
+    response_model=UserProfileResponse,
+    responses=error_responses(401, 404),
+)
+async def get_user_profile(
+    user_id: str,
+    current_user: dict = Depends(verify_token),
+    dragonfly: DragonflyService = Depends(get_dragonfly_service),
+    social_service: SocialService = Depends(get_social_service),
+):
+    viewer_id = current_user["sub"]
+    result = await User.find_one(User.id == user_id)
+    if not result:
+        raise HTTPException(status_code=404, detail="User not found")
+
+    is_online, last_time_online = await dragonfly.get_user_presence(result.id)
+    prefs = await UserPreferences.find_one(UserPreferences.user_id == user_id)
+    is_friend = await social_service.are_friends(viewer_id, user_id)
+    (
+        outgoing_pending,
+        incoming_pending,
+        outgoing_request_id,
+        incoming_request_id,
+    ) = await social_service.get_pending_request_state(
+        viewer_id,
+        user_id,
+    )
+    is_blocked_by_me = await social_service.is_blocked_by_user(viewer_id, user_id)
+    has_blocked_me = await social_service.is_blocked_by_user(user_id, viewer_id)
+    viewer_friend_ids = await social_service.get_friend_ids(viewer_id)
+    target_friend_ids = await social_service.get_friend_ids(user_id)
+    mutual_friends_count = len(viewer_friend_ids & target_friend_ids)
+    shared_groups = await ChatRoom.find(ChatRoom.is_group == True).to_list()  # noqa: E712
+    shared_groups_count = sum(
+        1
+        for room in shared_groups
+        if viewer_id in {linked_document_id(member) for member in room.members}
+        and user_id in {linked_document_id(member) for member in room.members}
+    )
+    friends_since = await social_service.get_friendship_since(viewer_id, user_id)
+
+    return UserProfileResponse.model_validate(
+        {
+            "id": result.id,
+            "username": result.username,
+            "full_name": result.full_name,
+            "avatar": result.avatar,
+            "is_online": is_online,
+            "created_at": result.created_at,
+            "last_time_online": last_time_online or result.last_time_online,
+            "bio": prefs.bio if prefs else None,
+            "status_emoji": prefs.status_emoji if prefs else None,
+            "is_friend": is_friend,
+            "outgoing_friend_request_pending": outgoing_pending,
+            "incoming_friend_request_pending": incoming_pending,
+            "outgoing_friend_request_id": outgoing_request_id,
+            "incoming_friend_request_id": incoming_request_id,
+            "is_blocked_by_me": is_blocked_by_me,
+            "has_blocked_me": has_blocked_me,
+            "friends_since": friends_since,
+            "mutual_friends_count": mutual_friends_count,
+            "shared_groups_count": shared_groups_count,
+        }
+    )
 
 
 @router.get(

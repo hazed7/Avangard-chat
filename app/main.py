@@ -10,6 +10,7 @@ from app.modules.auth import router as auth
 from app.modules.calls import router as calls
 from app.modules.messages import router as messages
 from app.modules.messages.unread.worker import UnreadCounterReconciliationWorker
+from app.modules.notifications.router import router as notifications_router
 from app.modules.rooms import router as rooms
 from app.modules.subscriptions.router import router as subscriptions_router
 from app.modules.summary import router as summary
@@ -89,6 +90,11 @@ app.include_router(users.router, prefix="/user", tags=["Users"])
 app.include_router(social_router, prefix="/user", tags=["Social"])
 app.include_router(rooms.router, prefix="/room", tags=["Rooms"])
 app.include_router(messages.router, prefix="/message", tags=["Messages"])
+app.include_router(
+    notifications_router,
+    prefix="/notifications",
+    tags=["Notifications"],
+)
 app.include_router(ws.router, prefix="/ws", tags=["WebSockets"])
 app.include_router(summary.router, prefix="/summary", tags=["Summary"])
 app.include_router(ai_assist.router, prefix="/ai_assist", tags=["AiAssist"])

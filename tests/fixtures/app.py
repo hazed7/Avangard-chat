@@ -12,6 +12,7 @@ from app.main import app
 from app.modules.calls.model import CallSession
 from app.modules.messages.model import Message
 from app.modules.messages.unread.model import RoomUnreadCounter
+from app.modules.notifications.model import Notification
 from app.modules.rooms.model import ChatRoom
 from app.modules.rooms.preferences_model import RoomUserPreference
 from app.modules.subscriptions.models import UserSubscription
@@ -167,6 +168,7 @@ def client(monkeypatch: pytest.MonkeyPatch) -> TestClient:
             document_models=[
                 User,
                 Message,
+                Notification,
                 ChatRoom,
                 RoomUserPreference,
                 RoomUnreadCounter,
