@@ -8,7 +8,10 @@ from app.modules.rooms.model import ChatRoom
 from app.modules.rooms.preferences_model import RoomUserPreference
 from app.modules.subscriptions.models import UserSubscription
 from app.modules.system.cleanup_jobs.model import CleanupJob
+from app.modules.users.blocks_model import UserBlock
+from app.modules.users.friends_model import FriendRequest
 from app.modules.users.model import User
+from app.modules.users.preferences_model import UserPreferences
 from app.platform.config.settings import settings
 
 
@@ -25,5 +28,8 @@ async def init_db() -> None:
             CleanupJob,
             CallSession,
             UserSubscription,
+            UserPreferences,
+            FriendRequest,
+            UserBlock,
         ],
     )

@@ -21,9 +21,11 @@ from app.modules.system.dependencies import (
     get_call_service,
     get_message_service,
     get_room_service,
+    get_social_service,
     verify_token,
 )
 from app.modules.system.streaming_utils import stream_with_cleanup
+from app.modules.users.social_service import SocialService
 from app.platform.backends.s3.service import s3_settings
 from app.platform.http.errors import error_responses
 from app.platform.http.schemas import OperationOkResponse
@@ -55,7 +57,13 @@ async def get_or_create_direct_room(
     data: DirectRoomCreate,
     user: dict = Depends(verify_token),
     room_service: RoomService = Depends(get_room_service),
+    social_service: SocialService = Depends(get_social_service),
 ):
+    if not await social_service.can_message(user["sub"], data.user_id):
+        raise HTTPException(
+            403,
+            "Cannot message this user due to privacy settings or block",
+        )
     result = await room_service.get_or_create_dm(data=data, creator_id=user["sub"])
     return serialize_chat_room_response(result)
 
@@ -163,7 +171,10 @@ async def add_group_member(
     data: GroupRoomMemberUpdate,
     user: dict = Depends(verify_token),
     room_service: RoomService = Depends(get_room_service),
+    social_service: SocialService = Depends(get_social_service),
 ):
+    if not await social_service.can_invite_to_group(user["sub"], data.user_id):
+        raise HTTPException(403, "User's privacy settings prevent this invitation")
     room = await room_service.add_group_member(
         room_id=room_id,
         user_id=data.user_id,

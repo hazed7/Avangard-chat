@@ -8,11 +8,15 @@ from starlette.websockets import WebSocketDisconnect
 from app.modules.ws.manager import ConnectionContext, ConnectionManager
 from app.platform.config.settings import settings
 from tests.helpers.auth import auth_headers, register_user
-from tests.helpers.chat import create_room
+from tests.helpers.chat import create_message, create_room
 
 
 def _ws_url(room_id: str) -> str:
     return f"/ws/{room_id}"
+
+
+def _ws_user_url() -> str:
+    return "/ws/user"
 
 
 def _ws_subprotocols(token: str) -> list[str]:
@@ -700,3 +704,302 @@ def test_websocket_ip_abuse_limit_blocks_connect_spam(
             pass
 
     assert exc_info.value.code == 1008
+
+
+def test_room_websocket_receives_room_collaboration_events(client: TestClient):
+    owner = register_user(client, "ws-collab-owner")
+    admin = register_user(client, "ws-collab-admin")
+    new_member = register_user(client, "ws-collab-member")
+    room = create_room(
+        client,
+        owner["access_token"],
+        member_ids=[admin["user"]["id"]],
+        name="ws-collab-room",
+    )
+
+    with (
+        client.websocket_connect(
+            _ws_url(room["id"]),
+            subprotocols=_ws_subprotocols(owner["access_token"]),
+        ) as owner_ws,
+        client.websocket_connect(
+            _ws_url(room["id"]),
+            subprotocols=_ws_subprotocols(admin["access_token"]),
+        ) as admin_ws,
+    ):
+        promote_response = client.post(
+            f"/room/{room['id']}/admins",
+            headers=auth_headers(owner["access_token"]),
+            json={"user_id": admin["user"]["id"]},
+        )
+        assert promote_response.status_code == 200
+        promoted_owner = _ws_receive_until(owner_ws, "chat.room.admin.promoted")
+        promoted_admin = _ws_receive_until(admin_ws, "chat.room.admin.promoted")
+
+        add_member_response = client.post(
+            f"/room/{room['id']}/members",
+            headers=auth_headers(admin["access_token"]),
+            json={"user_id": new_member["user"]["id"]},
+        )
+        assert add_member_response.status_code == 200
+        member_added_owner = _ws_receive_until(owner_ws, "chat.room.member.added")
+        member_added_admin = _ws_receive_until(admin_ws, "chat.room.member.added")
+
+        rename_response = client.patch(
+            f"/room/{room['id']}",
+            headers=auth_headers(admin["access_token"]),
+            json={"name": "ws-collab-renamed"},
+        )
+        assert rename_response.status_code == 200
+        updated_owner = _ws_receive_until(owner_ws, "chat.room.updated")
+        updated_admin = _ws_receive_until(admin_ws, "chat.room.updated")
+
+    for event in (promoted_owner, promoted_admin):
+        assert event["payload"]["room_id"] == room["id"]
+        assert event["payload"]["actor_id"] == owner["user"]["id"]
+        assert event["payload"]["user_id"] == admin["user"]["id"]
+
+    for event in (member_added_owner, member_added_admin):
+        assert event["payload"]["room_id"] == room["id"]
+        assert event["payload"]["actor_id"] == admin["user"]["id"]
+        assert event["payload"]["user_id"] == new_member["user"]["id"]
+
+    for event in (updated_owner, updated_admin):
+        assert event["payload"]["room_id"] == room["id"]
+        assert event["payload"]["actor_id"] == admin["user"]["id"]
+        assert event["payload"]["name"] == "ws-collab-renamed"
+
+
+def test_room_websocket_receives_pin_and_reaction_events(client: TestClient):
+    owner = register_user(client, "ws-pin-owner")
+    member = register_user(client, "ws-pin-member")
+    room = create_room(
+        client,
+        owner["access_token"],
+        member_ids=[member["user"]["id"]],
+        name="ws-pin-room",
+    )
+    message = create_message(
+        client,
+        owner["access_token"],
+        room["id"],
+        text="react to me",
+    )
+
+    with (
+        client.websocket_connect(
+            _ws_url(room["id"]),
+            subprotocols=_ws_subprotocols(owner["access_token"]),
+        ) as owner_ws,
+        client.websocket_connect(
+            _ws_url(room["id"]),
+            subprotocols=_ws_subprotocols(member["access_token"]),
+        ) as member_ws,
+    ):
+        pin_response = client.post(
+            f"/room/{room['id']}/pins/{message['id']}",
+            headers=auth_headers(member["access_token"]),
+        )
+        assert pin_response.status_code == 200
+        pin_event_owner = _ws_receive_until(owner_ws, "chat.room.pin.updated")
+        pin_event_member = _ws_receive_until(member_ws, "chat.room.pin.updated")
+
+        reaction_response = client.post(
+            f"/message/{message['id']}/reaction",
+            headers=auth_headers(member["access_token"]),
+            json={"emoji": "fire"},
+        )
+        assert reaction_response.status_code == 200
+        reaction_event_owner = _ws_receive_until(
+            owner_ws, "chat.message.reaction.updated"
+        )
+        reaction_event_member = _ws_receive_until(
+            member_ws, "chat.message.reaction.updated"
+        )
+
+    for event in (pin_event_owner, pin_event_member):
+        assert event["payload"]["room_id"] == room["id"]
+        assert event["payload"]["actor_id"] == member["user"]["id"]
+        assert event["payload"]["message_id"] == message["id"]
+        assert event["payload"]["is_pinned"] is True
+
+    for event in (reaction_event_owner, reaction_event_member):
+        assert event["payload"]["room_id"] == room["id"]
+        assert event["payload"]["message_id"] == message["id"]
+        assert event["payload"]["user_id"] == member["user"]["id"]
+        assert event["payload"]["emoji"] == "fire"
+        assert event["payload"]["reactions"] == [
+            {"emoji": "fire", "user_ids": [member["user"]["id"]]}
+        ]
+
+
+def test_user_websocket_receives_room_events_for_accessible_rooms(
+    client: TestClient,
+    monkeypatch: pytest.MonkeyPatch,
+):
+    monkeypatch.setattr(settings, "ws_connect_rate_limit_max_attempts", 1000)
+    monkeypatch.setattr(settings, "ws_connect_rate_limit_window_seconds", 60)
+    monkeypatch.setattr(settings, "abuse_ws_ip_max_attempts", 1000)
+    monkeypatch.setattr(settings, "abuse_ws_user_max_attempts", 1000)
+    monkeypatch.setattr(settings, "abuse_window_seconds", 60)
+
+    owner = register_user(client, "ws-user-owner")
+    member = register_user(client, "ws-user-member")
+    room = create_room(
+        client,
+        owner["access_token"],
+        member_ids=[member["user"]["id"]],
+        name="ws-user-room",
+    )
+
+    with client.websocket_connect(
+        _ws_user_url(),
+        subprotocols=_ws_subprotocols(member["access_token"]),
+    ) as user_ws:
+        update_response = client.patch(
+            f"/room/{room['id']}/preferences",
+            headers=auth_headers(member["access_token"]),
+            json={"mute_forever": True, "is_archived": True},
+        )
+        assert update_response.status_code == 200
+        pref_event = _ws_receive_until(user_ws, "chat.room.preferences.updated")
+
+        invite_response = client.post(
+            f"/room/{room['id']}/invite-link",
+            headers=auth_headers(owner["access_token"]),
+        )
+        assert invite_response.status_code == 200
+        invite_event = _ws_receive_until(user_ws, "chat.room.invite.updated")
+
+    assert pref_event["payload"]["room_id"] == room["id"]
+    assert pref_event["payload"]["user_id"] == member["user"]["id"]
+    assert pref_event["payload"]["mute_forever"] is True
+    assert pref_event["payload"]["is_archived"] is True
+
+    assert invite_event["payload"]["room_id"] == room["id"]
+    assert invite_event["payload"]["actor_id"] == owner["user"]["id"]
+    assert invite_event["payload"]["has_active_invite"] is True
+
+
+def test_user_websocket_receives_friend_request_and_response_events(
+    client: TestClient,
+    monkeypatch: pytest.MonkeyPatch,
+):
+    monkeypatch.setattr(settings, "ws_connect_rate_limit_max_attempts", 1000)
+    monkeypatch.setattr(settings, "ws_connect_rate_limit_window_seconds", 60)
+    monkeypatch.setattr(settings, "abuse_ws_ip_max_attempts", 1000)
+    monkeypatch.setattr(settings, "abuse_ws_user_max_attempts", 1000)
+    monkeypatch.setattr(settings, "abuse_window_seconds", 60)
+
+    alice = register_user(client, "ws-friend-alice")
+    bob = register_user(client, "ws-friend-bob")
+
+    with (
+        client.websocket_connect(
+            _ws_user_url(),
+            subprotocols=_ws_subprotocols(alice["access_token"]),
+        ) as alice_ws,
+        client.websocket_connect(
+            _ws_user_url(),
+            subprotocols=_ws_subprotocols(bob["access_token"]),
+        ) as bob_ws,
+    ):
+        request_response = client.post(
+            f"/user/friends/request/{bob['user']['id']}",
+            headers=auth_headers(alice["access_token"]),
+        )
+        assert request_response.status_code == 200
+        created_alice = _ws_receive_until(alice_ws, "social.friend_request.created")
+        created_bob = _ws_receive_until(bob_ws, "social.friend_request.created")
+
+        request_id = request_response.json()["id"]
+        respond_response = client.patch(
+            f"/user/friends/request/{request_id}?action=accept",
+            headers=auth_headers(bob["access_token"]),
+        )
+        assert respond_response.status_code == 200
+        updated_alice = _ws_receive_until(alice_ws, "social.friend_request.updated")
+        updated_bob = _ws_receive_until(bob_ws, "social.friend_request.updated")
+
+    for event in (created_alice, created_bob):
+        assert event["payload"]["actor_id"] == alice["user"]["id"]
+        assert event["payload"]["request"]["from_user_id"] == alice["user"]["id"]
+        assert event["payload"]["request"]["to_user_id"] == bob["user"]["id"]
+        assert event["payload"]["request"]["status"] == "pending"
+
+    for event in (updated_alice, updated_bob):
+        assert event["payload"]["actor_id"] == bob["user"]["id"]
+        assert event["payload"]["request"]["id"] == request_id
+        assert event["payload"]["request"]["status"] == "accepted"
+
+
+def test_user_websocket_receives_friend_removed_and_block_events(
+    client: TestClient,
+    monkeypatch: pytest.MonkeyPatch,
+):
+    monkeypatch.setattr(settings, "ws_connect_rate_limit_max_attempts", 1000)
+    monkeypatch.setattr(settings, "ws_connect_rate_limit_window_seconds", 60)
+    monkeypatch.setattr(settings, "abuse_ws_ip_max_attempts", 1000)
+    monkeypatch.setattr(settings, "abuse_ws_user_max_attempts", 1000)
+    monkeypatch.setattr(settings, "abuse_window_seconds", 60)
+
+    alice = register_user(client, "ws-social-alice")
+    bob = register_user(client, "ws-social-bob")
+    request_response = client.post(
+        f"/user/friends/request/{bob['user']['id']}",
+        headers=auth_headers(alice["access_token"]),
+    )
+    assert request_response.status_code == 200
+    accept_response = client.patch(
+        f"/user/friends/request/{request_response.json()['id']}?action=accept",
+        headers=auth_headers(bob["access_token"]),
+    )
+    assert accept_response.status_code == 200
+
+    with (
+        client.websocket_connect(
+            _ws_user_url(),
+            subprotocols=_ws_subprotocols(alice["access_token"]),
+        ) as alice_ws,
+        client.websocket_connect(
+            _ws_user_url(),
+            subprotocols=_ws_subprotocols(bob["access_token"]),
+        ) as bob_ws,
+    ):
+        remove_response = client.delete(
+            f"/user/friends/{bob['user']['id']}",
+            headers=auth_headers(alice["access_token"]),
+        )
+        assert remove_response.status_code == 204
+        removed_alice = _ws_receive_until(alice_ws, "social.friend.removed")
+        removed_bob = _ws_receive_until(bob_ws, "social.friend.removed")
+
+        block_response = client.post(
+            f"/user/blocks/{bob['user']['id']}",
+            headers=auth_headers(alice["access_token"]),
+        )
+        assert block_response.status_code == 200
+        blocked_alice = _ws_receive_until(alice_ws, "social.block.updated")
+        blocked_bob = _ws_receive_until(bob_ws, "social.block.updated")
+
+        unblock_response = client.delete(
+            f"/user/blocks/{bob['user']['id']}",
+            headers=auth_headers(alice["access_token"]),
+        )
+        assert unblock_response.status_code == 204
+        unblocked_alice = _ws_receive_until(alice_ws, "social.block.updated")
+        unblocked_bob = _ws_receive_until(bob_ws, "social.block.updated")
+
+    for event in (removed_alice, removed_bob):
+        assert event["payload"]["actor_id"] == alice["user"]["id"]
+        assert event["payload"]["friend_user_id"] == bob["user"]["id"]
+
+    for event in (blocked_alice, blocked_bob):
+        assert event["payload"]["actor_id"] == alice["user"]["id"]
+        assert event["payload"]["target_user_id"] == bob["user"]["id"]
+        assert event["payload"]["is_blocked"] is True
+
+    for event in (unblocked_alice, unblocked_bob):
+        assert event["payload"]["actor_id"] == alice["user"]["id"]
+        assert event["payload"]["target_user_id"] == bob["user"]["id"]
+        assert event["payload"]["is_blocked"] is False

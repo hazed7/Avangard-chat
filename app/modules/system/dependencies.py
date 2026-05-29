@@ -13,6 +13,7 @@ from app.modules.rooms.service import RoomService
 from app.modules.subscriptions.service import SubscriptionService
 from app.modules.system.cleanup_jobs.service import CleanupJobService
 from app.modules.users.model import User
+from app.modules.users.social_service import SocialService
 from app.platform.backends.dragonfly.container import get_dragonfly_service_singleton
 from app.platform.backends.dragonfly.rate_limit import RateLimitService
 from app.platform.backends.dragonfly.service import DragonflyService
@@ -135,6 +136,12 @@ def get_s3_service() -> S3Service:
 
 def get_subscription_service() -> SubscriptionService:
     return SubscriptionService()
+
+
+def get_social_service(
+    dragonfly: DragonflyService = Depends(get_dragonfly_service),
+) -> SocialService:
+    return SocialService(dragonfly=dragonfly)
 
 
 def get_room_service(

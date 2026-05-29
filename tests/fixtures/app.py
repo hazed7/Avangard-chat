@@ -16,7 +16,10 @@ from app.modules.rooms.model import ChatRoom
 from app.modules.rooms.preferences_model import RoomUserPreference
 from app.modules.subscriptions.models import UserSubscription
 from app.modules.system.cleanup_jobs.model import CleanupJob
+from app.modules.users.blocks_model import UserBlock
+from app.modules.users.friends_model import FriendRequest
 from app.modules.users.model import User
+from app.modules.users.preferences_model import UserPreferences
 from app.modules.ws.manager import manager
 from app.platform.backends.dragonfly.container import get_dragonfly_adapter_singleton
 from app.platform.config.settings import settings
@@ -170,6 +173,9 @@ def client(monkeypatch: pytest.MonkeyPatch) -> TestClient:
                 CleanupJob,
                 CallSession,
                 UserSubscription,
+                UserPreferences,
+                FriendRequest,
+                UserBlock,
             ],
         )
 

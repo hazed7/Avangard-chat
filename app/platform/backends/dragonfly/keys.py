@@ -53,6 +53,14 @@ def ws_room_channel_pattern(prefix: str) -> str:
     return f"{prefix}:ws:room:*"
 
 
+def ws_user_channel(prefix: str, user_id: str) -> str:
+    return f"{prefix}:ws:user:{user_id}"
+
+
+def ws_user_channel_pattern(prefix: str) -> str:
+    return f"{prefix}:ws:user:*"
+
+
 def ws_presence_room_conn(
     prefix: str, room_id: str, user_id: str, connection_id: str
 ) -> str:

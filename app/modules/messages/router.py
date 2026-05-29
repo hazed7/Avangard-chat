@@ -1,4 +1,4 @@
-from fastapi import APIRouter, Depends, File, Form, Query, UploadFile
+from fastapi import APIRouter, Depends, File, Form, HTTPException, Query, UploadFile
 from starlette.responses import StreamingResponse
 
 from app.modules.messages.schemas import (
@@ -12,16 +12,21 @@ from app.modules.messages.schemas import (
     UnreadCountsResponse,
 )
 from app.modules.messages.service import MessageService
+from app.modules.rooms.service import RoomService
 from app.modules.subscriptions.dependencies import require_feature
 from app.modules.system.dependencies import (
     get_message_service,
     get_rate_limit_service,
+    get_room_service,
+    get_social_service,
     verify_token,
 )
 from app.modules.system.streaming_utils import stream_with_cleanup
+from app.modules.users.social_service import SocialService
 from app.platform.backends.dragonfly.rate_limit import RateLimitService
 from app.platform.http.errors import error_responses
 from app.platform.http.schemas import OperationOkResponse
+from app.platform.persistence.links import linked_document_id
 
 router = APIRouter()
 
@@ -35,7 +40,21 @@ async def send_message(
     data: MessageCreate,
     user: dict = Depends(verify_token),
     message_service: MessageService = Depends(get_message_service),
+    room_service: RoomService = Depends(get_room_service),
+    social_service: SocialService = Depends(get_social_service),
 ):
+    room = await room_service.get_for_user(data.room_id, user["sub"])
+    if not room.is_group:
+        other_member_ids = [
+            linked_document_id(ref)
+            for ref in room.members
+            if linked_document_id(ref) != user["sub"]
+        ]
+        if other_member_ids:
+            if not await social_service.can_message(user["sub"], other_member_ids[0]):
+                raise HTTPException(
+                    403, "Cannot message this user due to privacy settings or block"
+                )
     return await message_service.send(data=data, sender_id=user["sub"])
 
 

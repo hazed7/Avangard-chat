@@ -21,6 +21,7 @@ from app.modules.system.dependencies import (
     get_unread_counter_service,
 )
 from app.modules.users import router as users
+from app.modules.users.social_router import router as social_router
 from app.modules.ws import router as ws
 from app.modules.ws.manager import manager
 from app.platform.backends.dragonfly.container import get_dragonfly_service_singleton
@@ -85,6 +86,7 @@ app.include_router(auth.router, prefix="/auth", tags=["Auth"])
 app.include_router(calls.router, prefix="/call", tags=["Calls"])
 app.include_router(health.router, prefix="/health", tags=["Health"])
 app.include_router(users.router, prefix="/user", tags=["Users"])
+app.include_router(social_router, prefix="/user", tags=["Social"])
 app.include_router(rooms.router, prefix="/room", tags=["Rooms"])
 app.include_router(messages.router, prefix="/message", tags=["Messages"])
 app.include_router(ws.router, prefix="/ws", tags=["WebSockets"])

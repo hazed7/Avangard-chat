@@ -1,4 +1,4 @@
-from fastapi import APIRouter, Depends, Query
+from fastapi import APIRouter, Depends, HTTPException, Query
 
 from app.modules.calls.schemas import (
     CallCursorPageResponse,
@@ -6,8 +6,16 @@ from app.modules.calls.schemas import (
     CallSessionResponse,
 )
 from app.modules.calls.service import CallService
-from app.modules.system.dependencies import get_call_service, verify_token
+from app.modules.rooms.service import RoomService
+from app.modules.system.dependencies import (
+    get_call_service,
+    get_room_service,
+    get_social_service,
+    verify_token,
+)
+from app.modules.users.social_service import SocialService
 from app.platform.http.errors import error_responses
+from app.platform.persistence.links import linked_document_id
 
 router = APIRouter()
 
@@ -21,7 +29,19 @@ async def invite_call(
     room_id: str,
     user: dict = Depends(verify_token),
     call_service: CallService = Depends(get_call_service),
+    room_service: RoomService = Depends(get_room_service),
+    social_service: SocialService = Depends(get_social_service),
 ):
+    room = await room_service.get_for_user(room_id, user["sub"])
+    for member in room.members:
+        member_id = linked_document_id(member)
+        if member_id == user["sub"]:
+            continue
+        if not await social_service.can_call(user["sub"], member_id):
+            raise HTTPException(
+                403,
+                "Cannot call this user due to privacy settings or block",
+            )
     return await call_service.invite(room_id=room_id, user_id=user["sub"])
 
 
