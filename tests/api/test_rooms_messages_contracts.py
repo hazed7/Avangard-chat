@@ -16,6 +16,7 @@ ROOM_KEYS = {
     "admin_ids",
     "avatar_object_path",
     "is_archived",
+    "is_pinned",
     "mute_forever",
     "muted_until",
     "created_at",

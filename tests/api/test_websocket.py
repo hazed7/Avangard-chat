@@ -224,10 +224,10 @@ def test_websocket_typing_is_broadcast_and_cleared_on_message(client: TestClient
         member_typing_event = _ws_receive_until(member_ws, "chat.typing.updated")
 
         owner_ws.send_json(_ws_create_message_event("typing then send"))
-        owner_typing_cleared = _ws_receive_until(owner_ws, "chat.typing.updated")
         owner_message_created = _ws_receive_until(owner_ws, "chat.message.created")
-        member_typing_cleared = _ws_receive_until(member_ws, "chat.typing.updated")
+        owner_typing_cleared = _ws_receive_until(owner_ws, "chat.typing.updated")
         member_message_created = _ws_receive_until(member_ws, "chat.message.created")
+        member_typing_cleared = _ws_receive_until(member_ws, "chat.typing.updated")
 
     for event in (owner_typing_event, member_typing_event):
         assert event["type"] == "chat.typing.updated"
