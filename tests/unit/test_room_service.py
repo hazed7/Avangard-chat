@@ -50,6 +50,7 @@ def _service() -> RoomService:
         unread_counters=object(),
         cleanup_jobs=object(),
         s3_service=object(),
+        notifications=object(),
     )
 
 

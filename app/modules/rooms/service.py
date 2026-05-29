@@ -12,6 +12,7 @@ from pymongo.errors import DuplicateKeyError, PyMongoError
 
 from app.modules.messages.model import Message
 from app.modules.messages.unread.service import UnreadCounterService
+from app.modules.notifications.service import NotificationService
 from app.modules.rooms.model import ChatRoom
 from app.modules.rooms.preferences_model import RoomUserPreference
 from app.modules.rooms.schemas import DirectRoomCreate, GroupRoomCreate
@@ -37,12 +38,14 @@ class RoomService:
         unread_counters: UnreadCounterService,
         cleanup_jobs: CleanupJobService,
         s3_service: S3Service,
+        notifications: NotificationService,
     ):
         self.dragonfly = dragonfly
         self.typesense = typesense
         self.unread_counters = unread_counters
         self.cleanup_jobs = cleanup_jobs
         self.s3_service = s3_service
+        self.notifications = notifications
 
     @staticmethod
     def _dedupe_preserve_order(items: list[str]) -> list[str]:
@@ -475,6 +478,20 @@ class RoomService:
             str(updated_room.id),
             event_type="chat.room.member.added",
             payload={
+                "actor_id": actor_id,
+                "user_id": user_id,
+            },
+        )
+        actor = await self._get_user_or_401(actor_id)
+        await self.notifications.create(
+            user_id=user_id,
+            category="group_invite",
+            title="Добавили в группу",
+            body=f"{actor.full_name or actor.username} добавил вас в группу",
+            entity_type="room",
+            entity_id=str(updated_room.id),
+            payload={
+                "room_id": str(updated_room.id),
                 "actor_id": actor_id,
                 "user_id": user_id,
             },

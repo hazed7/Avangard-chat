@@ -32,6 +32,7 @@ from app.modules.messages.schemas import (
     serialize_message_response,
 )
 from app.modules.messages.unread.service import UnreadCounterService
+from app.modules.notifications.service import NotificationService
 from app.modules.rooms.model import ChatRoom
 from app.modules.rooms.service import RoomService
 from app.modules.subscriptions.service import SubscriptionService
@@ -79,6 +80,7 @@ class MessageService:
         cleanup_jobs: CleanupJobService,
         s3_service: S3Service,
         subscriptions: SubscriptionService,
+        notifications: NotificationService,
     ):
         self.room_service = room_service
         self.dragonfly = dragonfly
@@ -88,6 +90,7 @@ class MessageService:
         self.cleanup_jobs = cleanup_jobs
         self.s3_service = s3_service
         self.subscriptions = subscriptions
+        self.notifications = notifications
 
     async def _get_room_or_404(self, room_id: str) -> ChatRoom:
         room = await ChatRoom.get(room_id)
@@ -165,6 +168,34 @@ class MessageService:
     @staticmethod
     def _dedupe_preserve_order(items: list[str]) -> list[str]:
         return list(dict.fromkeys(items))
+
+    async def _create_mention_notifications(
+        self,
+        *,
+        room: ChatRoom,
+        sender: User,
+        message: Message,
+        mentioned_user_ids: list[str],
+    ) -> None:
+        room_name = room.name or "личном чате"
+        for mentioned_user_id in mentioned_user_ids:
+            if mentioned_user_id == sender.id:
+                continue
+            await self.notifications.create(
+                user_id=mentioned_user_id,
+                category="mention",
+                title="Вас упомянули",
+                body=(
+                    f"{sender.full_name or sender.username} упомянул вас в {room_name}"
+                ),
+                entity_type="message",
+                entity_id=str(message.id),
+                payload={
+                    "room_id": str(room.id),
+                    "message_id": str(message.id),
+                    "sender_id": sender.id,
+                },
+            )
 
     def _decrypt_text(self, message: Message) -> str:
         return self.message_crypto.decrypt(
@@ -407,6 +438,7 @@ class MessageService:
             "text_nonce": message.text_nonce,
             "text_key_id": message.text_key_id,
             "text_aad": message.text_aad,
+            "mentioned_user_ids": list(message.mentioned_user_ids),
             "is_edited": message.is_edited,
             "edited_at": message.edited_at,
         }
@@ -419,6 +451,7 @@ class MessageService:
         message.text_nonce = str(previous_state["text_nonce"])
         message.text_key_id = str(previous_state["text_key_id"])
         message.text_aad = str(previous_state["text_aad"])
+        message.mentioned_user_ids = list(previous_state["mentioned_user_ids"])
         message.is_edited = bool(previous_state["is_edited"])
         message.edited_at = previous_state["edited_at"]  # type: ignore[assignment]
 
@@ -487,6 +520,7 @@ class MessageService:
         self,
         message_encrypted: Message,
         room: ChatRoom,
+        sender: User,
         sender_id: str,
         text: str,
     ) -> MessageResponse:
@@ -527,6 +561,12 @@ class MessageService:
                 "type": "chat.message.created",
                 "payload": response.model_dump(mode="json"),
             },
+        )
+        await self._create_mention_notifications(
+            room=room,
+            sender=sender,
+            message=message_encrypted,
+            mentioned_user_ids=message_encrypted.mentioned_user_ids,
         )
         return response
 
@@ -577,7 +617,7 @@ class MessageService:
             read_by=[sender],
             created_at=created_at,
         )
-        return await self._send_encrypted(message, room, sender_id, data.text)
+        return await self._send_encrypted(message, room, sender, sender_id, data.text)
 
     async def send_voice_message(
         self,
@@ -643,6 +683,7 @@ class MessageService:
         return await self._send_encrypted(
             message,
             room,
+            sender,
             sender_id,
             VOICE_MESSAGE_PLACEHOLDER,
         )
@@ -721,6 +762,7 @@ class MessageService:
             text=data.text,
             room=room,
         )
+        previous_mentioned_user_ids = set(previous_state["mentioned_user_ids"])
         message.is_edited = True
         message.edited_at = datetime.now(UTC)
         await message.save()
@@ -747,6 +789,19 @@ class MessageService:
             user_id,
             message_id,
         )
+        new_mentions = [
+            mentioned_user_id
+            for mentioned_user_id in message.mentioned_user_ids
+            if mentioned_user_id not in previous_mentioned_user_ids
+        ]
+        if new_mentions:
+            sender = await self._get_user_or_404(user_id)
+            await self._create_mention_notifications(
+                room=room,
+                sender=sender,
+                message=message,
+                mentioned_user_ids=new_mentions,
+            )
         return await self._serialize_message(message, text=data.text, viewer_id=user_id)
 
     async def delete(self, message_id: str, user_id: str) -> None:
@@ -1087,7 +1142,11 @@ class MessageService:
             )
             try:
                 message_response = await self._send_encrypted(
-                    forwarded_message, target_room, user_id, decrypted_text
+                    forwarded_message,
+                    target_room,
+                    sender,
+                    user_id,
+                    decrypted_text,
                 )
                 result.append(message_response)
             except Exception:
