@@ -833,7 +833,16 @@ def test_room_websocket_receives_pin_and_reaction_events(client: TestClient):
         ]
 
 
-def test_user_websocket_receives_room_events_for_accessible_rooms(client: TestClient):
+def test_user_websocket_receives_room_events_for_accessible_rooms(
+    client: TestClient,
+    monkeypatch: pytest.MonkeyPatch,
+):
+    monkeypatch.setattr(settings, "ws_connect_rate_limit_max_attempts", 1000)
+    monkeypatch.setattr(settings, "ws_connect_rate_limit_window_seconds", 60)
+    monkeypatch.setattr(settings, "abuse_ws_ip_max_attempts", 1000)
+    monkeypatch.setattr(settings, "abuse_ws_user_max_attempts", 1000)
+    monkeypatch.setattr(settings, "abuse_window_seconds", 60)
+
     owner = register_user(client, "ws-user-owner")
     member = register_user(client, "ws-user-member")
     room = create_room(
@@ -874,7 +883,14 @@ def test_user_websocket_receives_room_events_for_accessible_rooms(client: TestCl
 
 def test_user_websocket_receives_friend_request_and_response_events(
     client: TestClient,
+    monkeypatch: pytest.MonkeyPatch,
 ):
+    monkeypatch.setattr(settings, "ws_connect_rate_limit_max_attempts", 1000)
+    monkeypatch.setattr(settings, "ws_connect_rate_limit_window_seconds", 60)
+    monkeypatch.setattr(settings, "abuse_ws_ip_max_attempts", 1000)
+    monkeypatch.setattr(settings, "abuse_ws_user_max_attempts", 1000)
+    monkeypatch.setattr(settings, "abuse_window_seconds", 60)
+
     alice = register_user(client, "ws-friend-alice")
     bob = register_user(client, "ws-friend-bob")
 
@@ -917,7 +933,16 @@ def test_user_websocket_receives_friend_request_and_response_events(
         assert event["payload"]["request"]["status"] == "accepted"
 
 
-def test_user_websocket_receives_friend_removed_and_block_events(client: TestClient):
+def test_user_websocket_receives_friend_removed_and_block_events(
+    client: TestClient,
+    monkeypatch: pytest.MonkeyPatch,
+):
+    monkeypatch.setattr(settings, "ws_connect_rate_limit_max_attempts", 1000)
+    monkeypatch.setattr(settings, "ws_connect_rate_limit_window_seconds", 60)
+    monkeypatch.setattr(settings, "abuse_ws_ip_max_attempts", 1000)
+    monkeypatch.setattr(settings, "abuse_ws_user_max_attempts", 1000)
+    monkeypatch.setattr(settings, "abuse_window_seconds", 60)
+
     alice = register_user(client, "ws-social-alice")
     bob = register_user(client, "ws-social-bob")
     request_response = client.post(
