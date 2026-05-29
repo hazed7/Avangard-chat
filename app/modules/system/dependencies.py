@@ -9,6 +9,7 @@ from app.modules.auth.service import AuthService
 from app.modules.calls.service import CallService
 from app.modules.messages.service import MessageService
 from app.modules.messages.unread.service import UnreadCounterService
+from app.modules.notifications.service import NotificationService
 from app.modules.rooms.service import RoomService
 from app.modules.subscriptions.service import SubscriptionService
 from app.modules.system.cleanup_jobs.service import CleanupJobService
@@ -138,10 +139,17 @@ def get_subscription_service() -> SubscriptionService:
     return SubscriptionService()
 
 
+def get_notification_service(
+    dragonfly: DragonflyService = Depends(get_dragonfly_service),
+) -> NotificationService:
+    return NotificationService(dragonfly=dragonfly)
+
+
 def get_social_service(
     dragonfly: DragonflyService = Depends(get_dragonfly_service),
+    notifications: NotificationService = Depends(get_notification_service),
 ) -> SocialService:
-    return SocialService(dragonfly=dragonfly)
+    return SocialService(dragonfly=dragonfly, notifications=notifications)
 
 
 def get_room_service(
@@ -150,6 +158,7 @@ def get_room_service(
     unread_counters: UnreadCounterService = Depends(get_unread_counter_service),
     cleanup_jobs: CleanupJobService = Depends(get_cleanup_job_service),
     s3_service: S3Service = Depends(get_s3_service),
+    notifications: NotificationService = Depends(get_notification_service),
 ) -> RoomService:
     return RoomService(
         dragonfly=dragonfly,
@@ -157,6 +166,7 @@ def get_room_service(
         unread_counters=unread_counters,
         cleanup_jobs=cleanup_jobs,
         s3_service=s3_service,
+        notifications=notifications,
     )
 
 
@@ -169,6 +179,7 @@ def get_message_service(
     cleanup_jobs: CleanupJobService = Depends(get_cleanup_job_service),
     s3_service: S3Service = Depends(get_s3_service),
     subscriptions: SubscriptionService = Depends(get_subscription_service),
+    notifications: NotificationService = Depends(get_notification_service),
 ) -> MessageService:
     return MessageService(
         room_service=room_service,
@@ -179,6 +190,7 @@ def get_message_service(
         cleanup_jobs=cleanup_jobs,
         s3_service=s3_service,
         subscriptions=subscriptions,
+        notifications=notifications,
     )
 
 

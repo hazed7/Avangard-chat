@@ -10,6 +10,9 @@ class UserPreferences(Document):
     privacy_messaging: str = Field("everyone")
     privacy_group_invite: str = Field("everyone")
     privacy_calling: str = Field("everyone")
+    notify_friend_requests: bool = True
+    notify_mentions: bool = True
+    notify_group_invites: bool = True
     bio: Optional[str] = Field(None, max_length=256)
     status_emoji: Optional[str] = Field(None, max_length=8)
 

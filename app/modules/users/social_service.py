@@ -2,6 +2,7 @@ from datetime import UTC, datetime
 
 from fastapi import HTTPException
 
+from app.modules.notifications.service import NotificationService
 from app.modules.subscriptions.models import SubscriptionStatus, UserSubscription
 from app.modules.users.blocks_model import UserBlock
 from app.modules.users.friends_model import FriendRequest
@@ -12,8 +13,14 @@ from app.platform.backends.dragonfly.service import DragonflyService
 
 
 class SocialService:
-    def __init__(self, *, dragonfly: DragonflyService):
+    def __init__(
+        self,
+        *,
+        dragonfly: DragonflyService,
+        notifications: NotificationService,
+    ):
         self.dragonfly = dragonfly
+        self.notifications = notifications
 
     @staticmethod
     def _serialize_friend_request(request: FriendRequest) -> dict[str, str]:
@@ -60,10 +67,16 @@ class SocialService:
             pref.privacy_group_invite = data.privacy_group_invite
         if data.privacy_calling is not None:
             pref.privacy_calling = data.privacy_calling
+        if data.notify_friend_requests is not None:
+            pref.notify_friend_requests = data.notify_friend_requests
+        if data.notify_mentions is not None:
+            pref.notify_mentions = data.notify_mentions
+        if data.notify_group_invites is not None:
+            pref.notify_group_invites = data.notify_group_invites
         if data.bio is not None:
-            pref.bio = data.bio
+            pref.bio = data.bio or None
         if data.status_emoji is not None:
-            pref.status_emoji = data.status_emoji
+            pref.status_emoji = data.status_emoji or None
         await pref.save()
         return pref
 
@@ -86,6 +99,67 @@ class SocialService:
         )
         return req is not None
 
+    async def get_friend_ids(self, user_id: str) -> set[str]:
+        requests = await FriendRequest.find(
+            {
+                "$or": [
+                    {"from_user_id": user_id, "status": "accepted"},
+                    {"to_user_id": user_id, "status": "accepted"},
+                ]
+            }
+        ).to_list()
+        friend_ids: set[str] = set()
+        for req in requests:
+            friend_ids.add(
+                req.to_user_id if req.from_user_id == user_id else req.from_user_id
+            )
+        return friend_ids
+
+    async def get_friendship_since(
+        self,
+        user_id_1: str,
+        user_id_2: str,
+    ) -> datetime | None:
+        req = await FriendRequest.find_one(
+            {
+                "$or": [
+                    {
+                        "from_user_id": user_id_1,
+                        "to_user_id": user_id_2,
+                        "status": "accepted",
+                    },
+                    {
+                        "from_user_id": user_id_2,
+                        "to_user_id": user_id_1,
+                        "status": "accepted",
+                    },
+                ]
+            }
+        )
+        return req.updated_at if req else None
+
+    async def get_pending_request_state(
+        self,
+        viewer_id: str,
+        target_user_id: str,
+    ) -> tuple[bool, bool, str | None, str | None]:
+        outgoing = await FriendRequest.find_one(
+            FriendRequest.from_user_id == viewer_id,
+            FriendRequest.to_user_id == target_user_id,
+            FriendRequest.status == "pending",
+        )
+        incoming = await FriendRequest.find_one(
+            FriendRequest.from_user_id == target_user_id,
+            FriendRequest.to_user_id == viewer_id,
+            FriendRequest.status == "pending",
+        )
+        return (
+            outgoing is not None,
+            incoming is not None,
+            outgoing.id if outgoing else None,
+            incoming.id if incoming else None,
+        )
+
     async def is_blocked(self, user_id: str, other_user_id: str) -> bool:
         block = await UserBlock.find_one(
             {
@@ -94,6 +168,13 @@ class SocialService:
                     {"user_id": other_user_id, "blocked_user_id": user_id},
                 ]
             }
+        )
+        return block is not None
+
+    async def is_blocked_by_user(self, user_id: str, blocked_user_id: str) -> bool:
+        block = await UserBlock.find_one(
+            UserBlock.user_id == user_id,
+            UserBlock.blocked_user_id == blocked_user_id,
         )
         return block is not None
 
@@ -186,6 +267,20 @@ class SocialService:
             event_type="social.friend_request.created",
             payload=payload,
         )
+        sender = await User.find_one(User.id == from_user_id)
+        if sender:
+            await self.notifications.create(
+                user_id=to_user_id,
+                category="friend_request",
+                title="Запрос в друзья",
+                body=(
+                    f"{sender.full_name or sender.username} "
+                    "отправил вам запрос в друзья"
+                ),
+                entity_type="friend_request",
+                entity_id=req.id,
+                payload=payload,
+            )
         return req
 
     async def respond_to_request(
@@ -216,6 +311,21 @@ class SocialService:
             event_type="social.friend_request.updated",
             payload=payload,
         )
+        if action == "accept":
+            actor = await User.find_one(User.id == user_id)
+            if actor:
+                await self.notifications.create(
+                    user_id=req.from_user_id,
+                    category="friend_request_accepted",
+                    title="Запрос принят",
+                    body=(
+                        f"{actor.full_name or actor.username} "
+                        "принял ваш запрос в друзья"
+                    ),
+                    entity_type="friend_request",
+                    entity_id=req.id,
+                    payload=payload,
+                )
         return req
 
     async def remove_friend(self, user_id: str, friend_user_id: str) -> None:

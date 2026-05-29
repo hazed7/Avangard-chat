@@ -41,6 +41,9 @@ class UserPreferencesResponse(BaseModel):
     privacy_messaging: MessagingPrivacy = "everyone"
     privacy_group_invite: ContactPrivacy = "everyone"
     privacy_calling: ContactPrivacy = "everyone"
+    notify_friend_requests: bool = True
+    notify_mentions: bool = True
+    notify_group_invites: bool = True
     bio: Optional[str] = None
     status_emoji: Optional[str] = None
 
@@ -49,6 +52,9 @@ class UserPreferencesUpdate(BaseModel):
     privacy_messaging: Optional[MessagingPrivacy] = None
     privacy_group_invite: Optional[ContactPrivacy] = None
     privacy_calling: Optional[ContactPrivacy] = None
+    notify_friend_requests: Optional[bool] = None
+    notify_mentions: Optional[bool] = None
+    notify_group_invites: Optional[bool] = None
     bio: Optional[str] = Field(None, max_length=256)
     status_emoji: Optional[str] = Field(None, max_length=8)
 
@@ -79,11 +85,36 @@ class BlockInfo(BaseModel):
     blocked_at: datetime
 
 
+class UserProfileResponse(BaseModel):
+    id: str
+    username: str
+    full_name: str
+    avatar: Optional[str] = None
+    is_online: bool
+    created_at: datetime
+    last_time_online: Optional[datetime] = None
+    bio: Optional[str] = None
+    status_emoji: Optional[str] = None
+    is_friend: bool
+    outgoing_friend_request_pending: bool
+    incoming_friend_request_pending: bool
+    outgoing_friend_request_id: Optional[str] = None
+    incoming_friend_request_id: Optional[str] = None
+    is_blocked_by_me: bool
+    has_blocked_me: bool
+    friends_since: Optional[datetime] = None
+    mutual_friends_count: int = 0
+    shared_groups_count: int = 0
+
+
 def serialize_preferences(pref) -> UserPreferencesResponse:
     return UserPreferencesResponse(
         privacy_messaging=pref.privacy_messaging if pref else "everyone",
         privacy_group_invite=pref.privacy_group_invite if pref else "everyone",
         privacy_calling=pref.privacy_calling if pref else "everyone",
+        notify_friend_requests=pref.notify_friend_requests if pref else True,
+        notify_mentions=pref.notify_mentions if pref else True,
+        notify_group_invites=pref.notify_group_invites if pref else True,
         bio=pref.bio if pref else None,
         status_emoji=pref.status_emoji if pref else None,
     )
