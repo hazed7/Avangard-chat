@@ -345,6 +345,19 @@ class RoomService:
                 groups.append(room)
             else:
                 dms.append(room)
+
+        def sort_key(room):
+            pref = prefs_by_room.get(str(room.id))
+            last_at = room.last_message_at or room.created_at
+            return (
+                pref.pinned_at is None if pref else True,
+                -(pref.pinned_at.timestamp() if pref and pref.pinned_at else 0),
+                -last_at.timestamp(),
+            )
+
+        groups.sort(key=sort_key)
+        dms.sort(key=sort_key)
+        archived.sort(key=sort_key)
         return groups, dms, archived, prefs_by_room, next_cursor
 
     async def delete_room(self, room_id: str, user_id: str) -> None:
@@ -649,6 +662,7 @@ class RoomService:
         mute_forever: bool | None,
         muted_until: datetime | None,
         is_archived: bool | None,
+        is_pinned: bool | None,
     ) -> RoomUserPreference:
         await self.get_for_user(room_id, user_id)
         pref = await self._get_preference(room_id=room_id, user_id=user_id)
@@ -663,6 +677,8 @@ class RoomService:
             pref.mute_forever = False
         if is_archived is not None:
             pref.archived_at = datetime.now(UTC) if is_archived else None
+        if is_pinned is not None:
+            pref.pinned_at = datetime.now(UTC) if is_pinned else None
         await pref.save()
         await self._publish_room_event(
             room_id,
@@ -674,6 +690,7 @@ class RoomService:
                 if pref.muted_until
                 else None,
                 "is_archived": pref.archived_at is not None,
+                "is_pinned": pref.pinned_at is not None,
             },
         )
         return pref

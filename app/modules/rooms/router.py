@@ -301,6 +301,7 @@ async def update_room_preferences(
         mute_forever=data.mute_forever,
         muted_until=data.muted_until,
         is_archived=data.is_archived,
+        is_pinned=data.is_pinned,
     )
     room = await room_service.get_for_user(room_id, user["sub"])
     return serialize_chat_room_response(room, preference)

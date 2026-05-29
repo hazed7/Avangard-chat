@@ -40,6 +40,7 @@ class RoomPreferencesUpdate(BaseModel):
     mute_forever: bool | None = None
     muted_until: datetime | None = None
     is_archived: bool | None = None
+    is_pinned: bool | None = None
 
 
 class InviteLinkResponse(BaseModel):
@@ -65,6 +66,7 @@ class ChatRoomResponse(BaseModel):
     admin_ids: List[str]
     avatar_object_path: str | None = None
     is_archived: bool = False
+    is_pinned: bool = False
     mute_forever: bool = False
     muted_until: datetime | None = None
     created_at: datetime
@@ -95,6 +97,7 @@ def serialize_chat_room_response(
             "avatar_object_path": room.avatar_object_path,
             "is_archived": preference is not None
             and preference.archived_at is not None,
+            "is_pinned": preference is not None and preference.pinned_at is not None,
             "mute_forever": preference.mute_forever if preference else False,
             "muted_until": preference.muted_until if preference else None,
             "created_at": room.created_at,
