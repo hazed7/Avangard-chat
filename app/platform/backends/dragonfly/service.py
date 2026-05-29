@@ -176,6 +176,23 @@ class DragonflyService:
             room_id = channel.rsplit(":", maxsplit=1)[-1]
             yield room_id, payload
 
+    async def publish_user_event(self, user_id: str, payload: dict[str, Any]) -> None:
+        channel = keys.ws_user_channel(self._prefix, user_id)
+        try:
+            await self._adapter.publish(channel, payload)
+        except DRAGONFLY_BACKEND_ERRORS as exc:
+            await self._handle_backend_failure(
+                policy=self._settings.dragonfly.fail_policy.ws_pubsub,
+                feature="ws_user_pubsub_publish",
+                exc=exc,
+            )
+
+    async def subscribe_user_events(self):
+        pattern = keys.ws_user_channel_pattern(self._prefix)
+        async for channel, payload in self._adapter.subscribe_pattern(pattern):
+            user_id = channel.rsplit(":", maxsplit=1)[-1]
+            yield user_id, payload
+
     async def set_ws_presence(
         self,
         *,

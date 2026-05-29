@@ -35,6 +35,7 @@ class ConnectionManager:
         self._users: dict[str, list[WebSocket]] = defaultdict(list)
         self._context_by_socket: dict[WebSocket, ConnectionContext] = {}
         self._listener_task: asyncio.Task[None] | None = None
+        self._user_listener_task: asyncio.Task[None] | None = None
 
     @property
     def rooms(self) -> dict[str, list[WebSocket]]:
@@ -42,8 +43,10 @@ class ConnectionManager:
 
     async def startup(self) -> None:
         if self._listener_task and not self._listener_task.done():
-            return
-        self._listener_task = asyncio.create_task(self._listen_pubsub())
+            if self._user_listener_task and not self._user_listener_task.done():
+                return
+        self._listener_task = asyncio.create_task(self._listen_room_pubsub())
+        self._user_listener_task = asyncio.create_task(self._listen_user_pubsub())
 
     async def shutdown(self) -> None:
         if self._listener_task:
@@ -51,6 +54,11 @@ class ConnectionManager:
             with contextlib.suppress(asyncio.CancelledError):
                 await self._listener_task
             self._listener_task = None
+        if self._user_listener_task:
+            self._user_listener_task.cancel()
+            with contextlib.suppress(asyncio.CancelledError):
+                await self._user_listener_task
+            self._user_listener_task = None
         self._rooms.clear()
         self._users.clear()
         self._context_by_socket.clear()
@@ -218,7 +226,7 @@ class ConnectionManager:
             await websocket.close(code=1008)
         await self.disconnect(websocket, room_id)
 
-    async def _listen_pubsub(self) -> None:
+    async def _listen_room_pubsub(self) -> None:
         while True:
             try:
                 logger.info("ws_pubsub_listener_started")
@@ -230,6 +238,19 @@ class ConnectionManager:
                 logger.warning("ws_pubsub_listener_error error=%s", exc)
                 await asyncio.sleep(1)
                 logger.info("ws_pubsub_listener_reconnecting")
+
+    async def _listen_user_pubsub(self) -> None:
+        while True:
+            try:
+                logger.info("ws_user_pubsub_listener_started")
+                async for user_id, payload in self._dragonfly.subscribe_user_events():
+                    await self._fanout_user(user_id, payload)
+            except asyncio.CancelledError:
+                raise
+            except (HTTPException, OSError, TimeoutError, RuntimeError) as exc:
+                logger.warning("ws_user_pubsub_listener_error error=%s", exc)
+                await asyncio.sleep(1)
+                logger.info("ws_user_pubsub_listener_reconnecting")
 
     async def _fanout_local(self, room_id: str, message: dict[str, Any]) -> None:
         dead_connections: list[WebSocket] = []
@@ -294,6 +315,34 @@ class ConnectionManager:
                 await self.disconnect_user(websocket)
             else:
                 await self.disconnect(websocket, room_id)
+
+    async def _fanout_user(self, user_id: str, message: dict[str, Any]) -> None:
+        dead_connections: list[WebSocket] = []
+        unauthorized_connections: list[WebSocket] = []
+        for websocket in list(self._users.get(user_id, [])):
+            context = self._context_by_socket.get(websocket)
+            if not context:
+                dead_connections.append(websocket)
+                continue
+            try:
+                is_authorized = await self._is_token_authorized(context)
+            except HTTPException:
+                is_authorized = False
+            if not is_authorized:
+                unauthorized_connections.append(websocket)
+                continue
+            try:
+                await websocket.send_json(message)
+            except (RuntimeError, WebSocketDisconnect):
+                dead_connections.append(websocket)
+
+        for websocket in unauthorized_connections:
+            with contextlib.suppress(RuntimeError, WebSocketDisconnect):
+                await websocket.close(code=1008)
+            await self.disconnect_user(websocket)
+
+        for websocket in dead_connections:
+            await self.disconnect_user(websocket)
 
 
 manager = ConnectionManager(dragonfly=get_dragonfly_service_singleton())

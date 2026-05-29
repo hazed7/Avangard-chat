@@ -15,6 +15,36 @@ class SocialService:
     def __init__(self, *, dragonfly: DragonflyService):
         self.dragonfly = dragonfly
 
+    @staticmethod
+    def _serialize_friend_request(request: FriendRequest) -> dict[str, str]:
+        return {
+            "id": request.id,
+            "from_user_id": request.from_user_id,
+            "to_user_id": request.to_user_id,
+            "status": request.status,
+            "created_at": request.created_at.isoformat(),
+            "updated_at": request.updated_at.isoformat(),
+        }
+
+    async def _publish_user_event(
+        self,
+        user_id: str,
+        *,
+        event_type: str,
+        payload: dict,
+    ) -> None:
+        await self.dragonfly.publish_user_event(
+            user_id,
+            {
+                "type": event_type,
+                "payload": {
+                    "user_id": user_id,
+                    "ts": int(datetime.now(UTC).timestamp()),
+                    **payload,
+                },
+            },
+        )
+
     async def get_preferences(self, user_id: str) -> UserPreferences | None:
         return await UserPreferences.find_one(UserPreferences.user_id == user_id)
 
@@ -142,6 +172,20 @@ class SocialService:
             raise HTTPException(400, "This user already sent you a friend request")
         req = FriendRequest(from_user_id=from_user_id, to_user_id=to_user_id)
         await req.insert()
+        payload = {
+            "actor_id": from_user_id,
+            "request": self._serialize_friend_request(req),
+        }
+        await self._publish_user_event(
+            from_user_id,
+            event_type="social.friend_request.created",
+            payload=payload,
+        )
+        await self._publish_user_event(
+            to_user_id,
+            event_type="social.friend_request.created",
+            payload=payload,
+        )
         return req
 
     async def respond_to_request(
@@ -158,6 +202,20 @@ class SocialService:
             raise HTTPException(400, "Invalid action")
         req.updated_at = datetime.now(UTC)
         await req.save()
+        payload = {
+            "actor_id": user_id,
+            "request": self._serialize_friend_request(req),
+        }
+        await self._publish_user_event(
+            req.from_user_id,
+            event_type="social.friend_request.updated",
+            payload=payload,
+        )
+        await self._publish_user_event(
+            req.to_user_id,
+            event_type="social.friend_request.updated",
+            payload=payload,
+        )
         return req
 
     async def remove_friend(self, user_id: str, friend_user_id: str) -> None:
@@ -179,6 +237,20 @@ class SocialService:
         )
         if req:
             await req.delete()
+            payload = {
+                "actor_id": user_id,
+                "friend_user_id": friend_user_id,
+            }
+            await self._publish_user_event(
+                user_id,
+                event_type="social.friend.removed",
+                payload=payload,
+            )
+            await self._publish_user_event(
+                friend_user_id,
+                event_type="social.friend.removed",
+                payload=payload,
+            )
         else:
             raise HTTPException(404, "Friend not found")
 
@@ -246,6 +318,21 @@ class SocialService:
         ).delete()
         block = UserBlock(user_id=user_id, blocked_user_id=blocked_user_id)
         await block.insert()
+        payload = {
+            "actor_id": user_id,
+            "target_user_id": blocked_user_id,
+            "is_blocked": True,
+        }
+        await self._publish_user_event(
+            user_id,
+            event_type="social.block.updated",
+            payload=payload,
+        )
+        await self._publish_user_event(
+            blocked_user_id,
+            event_type="social.block.updated",
+            payload=payload,
+        )
         return BlockInfo(
             user_id=blocked_user.id,
             username=blocked_user.username,
@@ -261,6 +348,21 @@ class SocialService:
         )
         if block:
             await block.delete()
+            payload = {
+                "actor_id": user_id,
+                "target_user_id": blocked_user_id,
+                "is_blocked": False,
+            }
+            await self._publish_user_event(
+                user_id,
+                event_type="social.block.updated",
+                payload=payload,
+            )
+            await self._publish_user_event(
+                blocked_user_id,
+                event_type="social.block.updated",
+                payload=payload,
+            )
 
     async def get_blocked_users(self, user_id: str) -> list[BlockInfo]:
         blocks = await UserBlock.find(UserBlock.user_id == user_id).to_list()
