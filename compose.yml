@@ -77,7 +77,7 @@ services:
 
   dragonfly:
     container_name: dragonfly
-    image: docker.dragonflydb.io/dragonflydb/dragonfly:v1.27.1
+    image: redis:7-alpine
     ports:
       - "127.0.0.1:6379:6379"
     healthcheck:
