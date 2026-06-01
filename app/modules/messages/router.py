@@ -192,7 +192,7 @@ async def edit_message(
 )
 async def upload_attachment(
     message_id: str,
-    file: UploadFile,
+    file: UploadFile = File(...),
     user: dict = Depends(verify_token),
     message_service: MessageService = Depends(get_message_service),
 ):
