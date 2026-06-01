@@ -136,6 +136,17 @@ def test_settings_default_livekit_token_ttl_is_ten_minutes() -> None:
     assert config.livekit_token_ttl_seconds == 600
 
 
+def test_settings_default_transcription_provider_uses_openrouter() -> None:
+    config = Settings(**_base_settings_kwargs())
+
+    assert config.ai_transcription_base_url == (
+        "https://openrouter.ai/api/v1/audio/transcriptions"
+    )
+    assert config.ai_transcription_model == "qwen/qwen3-asr-flash-2026-02-10"
+    assert config.ai.transcription_base_url == config.ai_transcription_base_url
+    assert config.ai.transcription_model == config.ai_transcription_model
+
+
 def test_settings_build_s3_upload_limits() -> None:
     config = Settings(
         **_base_settings_kwargs(),

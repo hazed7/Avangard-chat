@@ -1,6 +1,6 @@
 from unittest.mock import AsyncMock, MagicMock, patch
 
-import openai
+import httpx
 import pytest
 from fastapi.testclient import TestClient
 
@@ -15,9 +15,7 @@ from tests.helpers.chat import (
     upload_attachment,
 )
 
-TRANSCRIPTIONS_CREATE = (
-    "app.modules.ai_assist.service._client_transcription.audio.transcriptions.create"
-)
+TRANSCRIPTIONS_CREATE = "app.modules.ai_assist.service._client_transcription.post"
 
 
 @pytest.fixture
@@ -33,8 +31,10 @@ def mock_subscriptions(client: TestClient):
 @pytest.fixture
 def mock_transcription_create(mock_subscriptions):
     mock_result = MagicMock()
-    mock_result.text = "Hey, transcribe it"
-
+    mock_result.json.return_value = {
+        "text": "Hey, transcribe it",
+    }
+    mock_result.raise_for_status.return_value = None
     with patch(
         TRANSCRIPTIONS_CREATE,
         new_callable=AsyncMock,
@@ -75,6 +75,35 @@ def test_transcription_successful(client: TestClient, mock_transcription_create)
     response_json = response.json()
     assert response_json["attachments"][0]["transcription"] == "Hey, transcribe it"
     assert response_json["id"] == message["id"]
+
+
+def test_transcription_normalizes_parameterized_audio_content_type(
+    client: TestClient,
+    mock_transcription_create,
+):
+    alice = register_user(client, "dm-alice")
+    bob = register_user(client, "dm-bob")
+
+    room = create_dm(client, alice["access_token"], bob["user"]["id"])
+    message = create_message(client, alice["access_token"], room["id"], text=" ")
+    message_with_attachment = upload_attachment(
+        client,
+        alice["access_token"],
+        message["id"],
+        "audio_message.webm",
+        "audio/webm; codecs=opus",
+    ).json()
+
+    response = transcribe_audio(
+        client,
+        alice["access_token"],
+        message["id"],
+        message_with_attachment["attachments"][0]["id"],
+    )
+
+    assert response.status_code == 200
+    payload = mock_transcription_create.await_args.kwargs["json"]
+    assert payload["input_audio"]["format"] == "webm"
 
 
 def test_transcription_idempotency(client: TestClient, mock_transcription_create):
@@ -193,14 +222,15 @@ def test_transcribe_audio_no_attachment(client: TestClient, mock_subscriptions):
 
 @pytest.fixture
 def mock_transcription_create_error(mock_subscriptions):
-    async def raise_error(*args, **kwargs):
-        raise openai.APIStatusError(
-            message="OpenAI error",
-            body={},
-            response=MagicMock(status_code=500),
-        )
+    mock_result = MagicMock()
+    mock_result.raise_for_status.side_effect = httpx.HTTPStatusError(
+        "provider error",
+        request=MagicMock(),
+        response=MagicMock(status_code=500, text="provider error"),
+    )
 
-    with patch(TRANSCRIPTIONS_CREATE, new=raise_error) as mock_create:
+    with patch(TRANSCRIPTIONS_CREATE, new_callable=AsyncMock) as mock_create:
+        mock_create.return_value = mock_result
         yield mock_create
 
 
@@ -273,7 +303,9 @@ def test_transcription_is_redacted_from_history_for_non_subscribers(
 
         attachment_id = message_with_attachment["attachments"][0]["id"]
         mock_result = MagicMock()
-        mock_result.text = "Hey, transcribe it"
+        mock_result.json.return_value = {
+            "text": "Hey, transcribe it",
+        }
         with patch(TRANSCRIPTIONS_CREATE, new_callable=AsyncMock) as mock_create:
             mock_create.return_value = mock_result
             response = transcribe_audio(
