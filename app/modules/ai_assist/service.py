@@ -15,6 +15,12 @@ _client = AsyncOpenAI(
     timeout=20.0,
 )
 
+_client_transcription = AsyncOpenAI(
+    api_key=settings.ai.transcription_api_key,
+    base_url=settings.ai.transcription_base_url,
+    timeout=20.0,
+)
+
 SYSTEM_PROMPT = (
     "You are a message rewriter assistant. "
     "The user will provide a message and a rewriting instruction. "
@@ -98,7 +104,7 @@ class AIAssistService:
     ) -> str:
         try:
             audio_bytes = await audio.read()
-            transcription = await _client.audio.transcriptions.create(
+            transcription = await _client_transcription.audio.transcriptions.create(
                 model=settings.ai.transcription_model,
                 file=(attachment.filename, audio_bytes),
             )
