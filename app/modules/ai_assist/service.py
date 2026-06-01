@@ -1,3 +1,6 @@
+import base64
+
+import httpx
 import openai
 from aiohttp import ClientResponse
 from fastapi import HTTPException
@@ -15,11 +18,7 @@ _client = AsyncOpenAI(
     timeout=20.0,
 )
 
-_client_transcription = AsyncOpenAI(
-    api_key=settings.ai.transcription_api_key,
-    base_url=settings.ai.transcription_base_url,
-    timeout=20.0,
-)
+_client_transcription = httpx.AsyncClient(timeout=20.0)
 
 SYSTEM_PROMPT = (
     "You are a message rewriting assistant for a Russian-language messenger. "
@@ -36,6 +35,30 @@ SYSTEM_PROMPT = (
 MAX_INPUT_CHARS = 1000
 
 logger = get_logger("audit")
+
+MIME_TO_FORMAT = {
+    "audio/mpeg": "mp3",
+    "audio/mp3": "mp3",
+    "audio/ogg": "ogg",
+    "audio/ogg;codecs=opus": "ogg",
+    "audio/wav": "wav",
+    "audio/webm": "webm",
+    "audio/webm;codecs=opus": "webm",
+    "audio/aac": "aac",
+    "audio/x-m4a": "m4a",
+    "audio/mp4": "m4a",
+    "audio/flac": "flac",
+}
+
+
+def _normalize_audio_format(content_type: str | None) -> str | None:
+    if not content_type:
+        return None
+    direct = MIME_TO_FORMAT.get(content_type)
+    if direct:
+        return direct
+    base = content_type.split(";", 1)[0].strip()
+    return MIME_TO_FORMAT.get(base)
 
 
 class AIAssistService:
@@ -122,43 +145,35 @@ class AIAssistService:
     ) -> str:
         try:
             audio_bytes = await audio.read()
-            transcription = await _client_transcription.audio.transcriptions.create(
-                model=settings.ai.transcription_model,
-                file=(attachment.filename, audio_bytes),
+            audio_format = _normalize_audio_format(attachment.content_type)
+            if not audio_format:
+                raise HTTPException(400, "Unsupported audio format for transcription")
+            payload = {
+                "input_audio": {
+                    "data": base64.b64encode(audio_bytes).decode(),
+                    "format": audio_format,
+                },
+                "model": settings.ai.transcription_model,
+            }
+            response = await _client_transcription.post(
+                settings.ai.transcription_base_url,
+                headers={
+                    "Authorization": f"Bearer {settings.ai.transcription_api_key}",
+                    "Content-Type": "application/json",
+                },
+                json=payload,
             )
-            return transcription.text
-        except openai.APITimeoutError as exc:
+            response.raise_for_status()
+            data = response.json()
+            return data["text"]
+        except httpx.TimeoutException as exc:
             raise HTTPException(
-                status_code=504,
-                detail="Transcription timed out, please try again",
+                504, "Transcription timed out, please try again"
             ) from exc
-        except openai.APIConnectionError as exc:
+        except httpx.ConnectError as exc:
+            raise HTTPException(502, "Could not reach transcription service") from exc
+        except httpx.HTTPStatusError as exc:
             raise HTTPException(
-                status_code=502,
-                detail="Could not reach transcription service",
-            ) from exc
-        except openai.RateLimitError as exc:
-            raise HTTPException(
-                status_code=503,
-                detail="Transcription service is temporarily unavailable",
-            ) from exc
-        except openai.InternalServerError as exc:
-            raise HTTPException(
-                status_code=502,
-                detail="Transcription service returned an error",
-            ) from exc
-        except openai.BadRequestError as exc:
-            raise HTTPException(
-                status_code=400,
-                detail="Transcription bad request",
-            ) from exc
-        except openai.AuthenticationError as exc:
-            raise HTTPException(
-                status_code=403,
-                detail="Transcription service forbidden",
-            ) from exc
-        except openai.APIStatusError as exc:
-            raise HTTPException(
-                status_code=exc.status_code,
-                detail=exc.message,
+                status_code=exc.response.status_code,
+                detail=exc.response.text,
             ) from exc

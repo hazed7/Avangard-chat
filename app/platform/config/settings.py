@@ -269,8 +269,8 @@ class Settings(BaseSettings):
     summary_rate_limit_window_seconds: int = 60
     summary_rate_limit_max_attempts: int = 10
 
-    ai_transcription_base_url: str = "https://api.groq.com/openai/v1"
-    ai_transcription_model: str = "whisper-large-v3-turbo"
+    ai_transcription_base_url: str = "https://openrouter.ai/api/v1/audio/transcriptions"
+    ai_transcription_model: str = "qwen/qwen3-asr-flash-2026-02-10"
     ai_transcription_api_key: str = "ai_transcription_api_key"
     subscription_self_activation_enabled: bool = False
 
