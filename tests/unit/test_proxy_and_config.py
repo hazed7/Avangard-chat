@@ -139,6 +139,10 @@ def test_settings_default_livekit_token_ttl_is_ten_minutes() -> None:
 def test_settings_default_transcription_provider_uses_openrouter() -> None:
     config = Settings(**_base_settings_kwargs())
 
+    assert config.ai_summary_model == "qwen/qwen3-32b"
+    assert config.ai_rewrite_model == "llama-3.1-8b-instant"
+    assert config.ai.summary_model == config.ai_summary_model
+    assert config.ai.rewrite_model == config.ai_rewrite_model
     assert config.ai_transcription_base_url == (
         "https://openrouter.ai/api/v1/audio/transcriptions"
     )

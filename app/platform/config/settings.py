@@ -153,6 +153,7 @@ class OpenAISettings(BaseModel):
     base_url: str
     api_key: str
     summary_model: str
+    rewrite_model: str
     transcription_base_url: str
     transcription_api_key: str
     transcription_model: str
@@ -262,7 +263,8 @@ class Settings(BaseSettings):
 
     ai_base_url: str = "https://api.groq.com/openai/v1"
     ai_api_key: str = "ai_api_key"
-    ai_summary_model: str = "llama-3.3-70b-versatile"
+    ai_summary_model: str = "qwen/qwen3-32b"
+    ai_rewrite_model: str = "llama-3.1-8b-instant"
     ai_summary_max_messages: int = 30
     ai_summary_max_chars_per_message: int = 300
 
@@ -490,6 +492,7 @@ class Settings(BaseSettings):
             base_url=self.ai_base_url,
             api_key=self.ai_api_key,
             summary_model=self.ai_summary_model,
+            rewrite_model=self.ai_rewrite_model,
             transcription_base_url=self.ai_transcription_base_url,
             transcription_api_key=self.ai_transcription_api_key,
             transcription_model=self.ai_transcription_model,

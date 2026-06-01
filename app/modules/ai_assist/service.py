@@ -87,7 +87,7 @@ class AIAssistService:
 
         try:
             response = await _client.chat.completions.create(
-                model=settings.ai.summary_model,
+                model=settings.ai.rewrite_model,
                 messages=[
                     {"role": "system", "content": SYSTEM_PROMPT},
                     {"role": "user", "content": user_content},

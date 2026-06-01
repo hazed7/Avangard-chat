@@ -178,6 +178,7 @@ class TestRewriteHappyPath:
 
         async def capture(**kwargs):
             captured["messages"] = kwargs["messages"]
+            captured["model"] = kwargs["model"]
             return _ok_response("ok")
 
         with patch("app.modules.ai_assist.service._client") as mock_client:
@@ -187,6 +188,7 @@ class TestRewriteHappyPath:
             )
 
         user_content = captured["messages"][1]["content"]
+        assert captured["model"] == "llama-3.1-8b-instant"
         assert STYLE_PROMPTS[RewriteStyle.ASSERTIVE] in user_content
         assert "test message" in user_content
 
