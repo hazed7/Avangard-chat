@@ -16,7 +16,7 @@ from tests.helpers.chat import (
 )
 
 TRANSCRIPTIONS_CREATE = (
-    "app.modules.ai_assist.service._client.audio.transcriptions.create"
+    "app.modules.ai_assist.service._client_transcription.audio.transcriptions.create"
 )
 
 
