@@ -1,9 +1,11 @@
 from unittest.mock import AsyncMock, MagicMock, patch
 
+import httpx
 import pytest
 from fastapi import HTTPException
 
 from app.modules.ai_assist.enums import RewriteStyle
+from app.modules.messages.model import Attachment
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -32,6 +34,37 @@ async def _call_rewrite(
                 return_value=_ok_response(response_text)
             )
         return await AIAssistService.rewrite(text=text, style=style)
+
+
+async def _call_transcription(
+    *,
+    content_type: str = "audio/mpeg",
+    filename: str = "voice.mp3",
+    audio_bytes: bytes = b"audio-bytes",
+    post_side_effect=None,
+    response_text: str = "transcribed",
+):
+    from app.modules.ai_assist.service import AIAssistService
+
+    audio = AsyncMock()
+    audio.read.return_value = audio_bytes
+    attachment = Attachment(
+        filename=filename,
+        object_path="audio/room/file",
+        content_type=content_type,
+    )
+
+    response = MagicMock()
+    response.raise_for_status.return_value = None
+    response.json.return_value = {"text": response_text}
+
+    with patch("app.modules.ai_assist.service._client_transcription") as mock_client:
+        if post_side_effect:
+            mock_client.post = AsyncMock(side_effect=post_side_effect)
+        else:
+            mock_client.post = AsyncMock(return_value=response)
+        result = await AIAssistService.transcript_voice_message(audio, attachment)
+        return result, mock_client
 
 
 # ---------------------------------------------------------------------------
@@ -176,6 +209,105 @@ class TestRewriteHappyPath:
 
         user_content = captured["messages"][1]["content"]
         assert "Preferred output language: Russian." in user_content
+
+
+class TestTranscriptionHappyPath:
+    @pytest.mark.asyncio
+    async def test_transcription_builds_openrouter_request(self):
+        result, mock_client = await _call_transcription(
+            content_type="audio/mp4",
+            filename="voice.m4a",
+            audio_bytes=b"\x00\x01voice",
+        )
+
+        assert result == "transcribed"
+        kwargs = mock_client.post.await_args.kwargs
+        assert kwargs["headers"]["Authorization"].startswith("Bearer ")
+        assert kwargs["json"]["model"] == "qwen/qwen3-asr-flash-2026-02-10"
+        assert kwargs["json"]["input_audio"]["format"] == "m4a"
+        assert kwargs["json"]["input_audio"]["data"]
+
+    @pytest.mark.asyncio
+    async def test_transcription_normalizes_parameterized_content_type(self):
+        result, mock_client = await _call_transcription(
+            content_type="audio/webm; codecs=opus",
+            filename="voice.webm",
+        )
+
+        assert result == "transcribed"
+        kwargs = mock_client.post.await_args.kwargs
+        assert kwargs["json"]["input_audio"]["format"] == "webm"
+
+    def test_normalize_audio_format_matches_base_content_type(self):
+        from app.modules.ai_assist.service import _normalize_audio_format
+
+        assert _normalize_audio_format("audio/webm; codecs=opus") == "webm"
+        assert _normalize_audio_format("audio/ogg;codecs=opus") == "ogg"
+        assert _normalize_audio_format("audio/mp3") == "mp3"
+
+
+class TestTranscriptionValidation:
+    @pytest.mark.asyncio
+    async def test_unsupported_transcription_format_raises_400(self):
+        from app.modules.ai_assist.service import AIAssistService
+
+        audio = AsyncMock()
+        audio.read.return_value = b"fake"
+        attachment = Attachment(
+            filename="voice.bin",
+            object_path="audio/room/file",
+            content_type="application/octet-stream",
+        )
+
+        with pytest.raises(HTTPException) as exc_info:
+            await AIAssistService.transcript_voice_message(audio, attachment)
+
+        assert exc_info.value.status_code == 400
+
+    def test_normalize_audio_format_returns_none_for_missing_content_type(self):
+        from app.modules.ai_assist.service import _normalize_audio_format
+
+        assert _normalize_audio_format(None) is None
+
+
+class TestTranscriptionErrorHandling:
+    @pytest.mark.asyncio
+    async def test_timeout_raises_504(self):
+        with pytest.raises(HTTPException) as exc_info:
+            await _call_transcription(
+                post_side_effect=httpx.TimeoutException("timeout"),
+            )
+
+        assert exc_info.value.status_code == 504
+
+    @pytest.mark.asyncio
+    async def test_connect_error_raises_502(self):
+        with pytest.raises(HTTPException) as exc_info:
+            await _call_transcription(
+                post_side_effect=httpx.ConnectError("offline"),
+            )
+
+        assert exc_info.value.status_code == 502
+
+    @pytest.mark.asyncio
+    async def test_http_status_error_raises_provider_status(self):
+        response = MagicMock()
+        response.status_code = 429
+        response.text = "slow down"
+        response.raise_for_status.side_effect = httpx.HTTPStatusError(
+            "slow down",
+            request=MagicMock(),
+            response=response,
+        )
+
+        async def fail_post(*args, **kwargs):
+            return response
+
+        with pytest.raises(HTTPException) as exc_info:
+            await _call_transcription(post_side_effect=fail_post)
+
+        assert exc_info.value.status_code == 429
+        assert exc_info.value.detail == "slow down"
 
 
 # ---------------------------------------------------------------------------
