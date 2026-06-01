@@ -211,6 +211,26 @@ async def remove_group_member(
 
 
 @router.post(
+    "/{room_id}/leave",
+    response_model=OperationOkResponse,
+    responses=error_responses(400, 401, 403, 404),
+)
+async def leave_group(
+    room_id: str,
+    user: dict = Depends(verify_token),
+    room_service: RoomService = Depends(get_room_service),
+    call_service: CallService = Depends(get_call_service),
+):
+    await room_service.leave_group(room_id=room_id, user_id=user["sub"])
+    await call_service.handle_room_member_removed(
+        room_id=room_id,
+        user_id=user["sub"],
+        actor_id=user["sub"],
+    )
+    return {"ok": True}
+
+
+@router.post(
     "/{room_id}/admins",
     response_model=ChatRoomResponse,
     responses=error_responses(400, 401, 403, 404, 422),

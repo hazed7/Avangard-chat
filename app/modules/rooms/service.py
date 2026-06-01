@@ -537,6 +537,43 @@ class RoomService:
         )
         return updated_room
 
+    async def leave_group(
+        self,
+        *,
+        room_id: str,
+        user_id: str,
+    ) -> None:
+        room = await self._get_room_or_404(room_id)
+        self._ensure_group_room(room)
+
+        creator_id = linked_document_id(room.created_by)
+        if user_id == creator_id:
+            raise HTTPException(
+                status_code=400,
+                detail="Room owner cannot leave the group",
+            )
+
+        await self._ensure_room_access(room, user_id)
+        user = await self._get_user_or_401(user_id)
+        user_ref = linked_document_ref(User.Settings.name, user.id)
+        await ChatRoom.get_motor_collection().update_one(
+            {"_id": room.id},
+            {"$pull": {"members": user_ref, "admins": user_ref}},
+        )
+        await self.dragonfly.invalidate_room_access_cache(str(room.id))
+        await self.unread_counters.remove_for_room_user(
+            room_id=str(room.id),
+            user_id=user_id,
+        )
+        await self._publish_room_event(
+            str(room.id),
+            event_type="chat.room.member.removed",
+            payload={
+                "actor_id": user_id,
+                "user_id": user_id,
+            },
+        )
+
     async def update_group_name(
         self,
         *,

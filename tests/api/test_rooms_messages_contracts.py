@@ -169,6 +169,13 @@ def test_rooms_and_messages_contract_shapes(client: TestClient):
     assert mark_room_read_response.status_code == 200
     _assert_exact_keys(mark_room_read_response.json(), {"ok", "marked_count"})
 
+    leave_response = client.post(
+        f"/room/{group['id']}/leave",
+        headers=auth_headers(member["access_token"]),
+    )
+    assert leave_response.status_code == 200
+    assert leave_response.json() == {"ok": True}
+
     edit_response = client.patch(
         f"/message/{message['id']}",
         headers=auth_headers(owner["access_token"]),
@@ -207,6 +214,7 @@ def test_openapi_rooms_and_messages_contracts_are_explicit(client: TestClient):
         ("/room/{room_id}", "get"),
         ("/room/{room_id}/members", "post"),
         ("/room/{room_id}/members/{user_id}", "delete"),
+        ("/room/{room_id}/leave", "post"),
         ("/room/user/{user_id}", "get"),
         ("/room/{room_id}", "delete"),
         ("/message", "post"),

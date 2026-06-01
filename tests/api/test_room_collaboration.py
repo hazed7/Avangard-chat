@@ -304,6 +304,43 @@ def test_admin_can_add_and_remove_members_but_not_owner(client: TestClient):
     assert promote_owner_response.json()["admin_ids"] == [admin["user"]["id"]]
 
 
+def test_member_can_leave_group_but_owner_cannot(client: TestClient):
+    owner = register_user(client, "leave-owner")
+    member = register_user(client, "leave-member")
+    room = create_room(
+        client,
+        owner["access_token"],
+        member_ids=[member["user"]["id"]],
+        name="leave-group",
+    )
+
+    leave_response = client.post(
+        f"/room/{room['id']}/leave",
+        headers=auth_headers(member["access_token"]),
+    )
+    assert leave_response.status_code == 200
+    assert leave_response.json() == {"ok": True}
+
+    room_for_owner = client.get(
+        f"/room/{room['id']}",
+        headers=auth_headers(owner["access_token"]),
+    )
+    assert room_for_owner.status_code == 200
+    assert member["user"]["id"] not in room_for_owner.json()["member_ids"]
+
+    room_for_member = client.get(
+        f"/room/{room['id']}",
+        headers=auth_headers(member["access_token"]),
+    )
+    assert room_for_member.status_code == 403
+
+    owner_leave_response = client.post(
+        f"/room/{room['id']}/leave",
+        headers=auth_headers(owner["access_token"]),
+    )
+    assert owner_leave_response.status_code == 400
+
+
 def test_room_listing_forbids_other_users_and_owner_can_delete_room(client: TestClient):
     owner = register_user(client, "delete-owner")
     other = register_user(client, "delete-other")
