@@ -157,6 +157,26 @@ class TestRewriteHappyPath:
         assert STYLE_PROMPTS[RewriteStyle.ASSERTIVE] in user_content
         assert "test message" in user_content
 
+    @pytest.mark.asyncio
+    async def test_rewrite_prompt_requests_russian_for_cyrillic_text(self):
+        from app.modules.ai_assist.service import AIAssistService
+
+        captured = {}
+
+        async def capture(**kwargs):
+            captured["messages"] = kwargs["messages"]
+            return _ok_response("ок")
+
+        with patch("app.modules.ai_assist.service._client") as mock_client:
+            mock_client.chat.completions.create = AsyncMock(side_effect=capture)
+            await AIAssistService.rewrite(
+                text="привет, давай созвонимся завтра",
+                style=RewriteStyle.FORMAL,
+            )
+
+        user_content = captured["messages"][1]["content"]
+        assert "Preferred output language: Russian." in user_content
+
 
 # ---------------------------------------------------------------------------
 # AIAssistService.rewrite — input validation

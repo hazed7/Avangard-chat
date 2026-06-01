@@ -89,6 +89,9 @@ class TestDetectMode:
     def test_unread_range_when_unread_plus_from_dt(self):
         assert self.svc._detect_mode(True, datetime.now(), None) == "unread+range"
 
+    def test_preferred_output_language_defaults_to_russian_for_cyrillic(self):
+        assert self.svc._preferred_output_language("привет hello") == "Russian"
+
 
 # ---------------------------------------------------------------------------
 # Tests for _build_conditions
@@ -306,6 +309,39 @@ class TestSummarizeRoom:
         assert count == 2
         assert was_capped is False
         assert mode == "recent"
+
+    @patch(CLIENT_PATH)
+    @patch(SETTINGS_PATH)
+    @patch(
+        "app.platform.persistence.links.linked_document_id", side_effect=lambda x: "id"
+    )
+    @patch(MESSAGE_PATH)
+    @patch(CHATROOM_PATH)
+    async def test_summary_prompt_requests_russian_for_cyrillic_chat(
+        self, mock_room_cls, mock_msg_cls, mock_linked, mock_settings, mock_client
+    ):
+        mock_room_cls.get = AsyncMock(return_value=_make_room())
+        mock_settings.ai.summary_max_messages = 50
+        mock_settings.ai.summary_max_chars_per_message = 500
+        mock_settings.ai.summary_model = "gpt-4o-mini"
+
+        msgs = [_make_message("ignored", "alice")]
+        _setup_message_query(mock_msg_cls, messages=msgs)
+
+        captured = {}
+
+        async def capture(**kwargs):
+            captured["messages"] = kwargs["messages"]
+            return _make_openai_response("Краткая сводка.")
+
+        mock_client.chat = MagicMock()
+        mock_client.chat.completions = MagicMock()
+        mock_client.chat.completions.create = AsyncMock(side_effect=capture)
+
+        await self._call(crypto=_make_crypto("привет как дела"))
+
+        user_content = captured["messages"][1]["content"]
+        assert "Preferred output language: Russian." in user_content
 
     # --- was_capped flag ---
 

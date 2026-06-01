@@ -19,10 +19,15 @@ _client = AsyncOpenAI(
 )
 
 SYSTEM_PROMPT = (
-    "You are a concise chat summarizer. "
-    "Given a list of chat messages with timestamps, produce a brief summary "
-    "(3-5 sentences) highlighting the key topics and decisions. "
-    "Reply in the same language as the messages."
+    "You are a concise chat summarizer for a Russian-language messenger. "
+    "Summarize only the content that is actually present in the messages. "
+    "Keep the summary compact, concrete, and useful: key topics, decisions, "
+    "agreements, action items, blockers, and unresolved questions. "
+    "Do not invent facts, do not add introductions, and do not mention that "
+    "you are an AI. "
+    "Output language rules: if the messages are mostly Russian or mixed, "
+    "answer in Russian. If the messages are clearly mostly in another single "
+    "language, answer in that language. If uncertain, answer in Russian."
 )
 
 # Жёсткий потолок — даже если диапазон огромный
@@ -30,6 +35,14 @@ HARD_CAP = 100
 
 
 class SummaryService:
+    @staticmethod
+    def _preferred_output_language(text: str) -> str:
+        cyrillic = sum(1 for char in text if "\u0400" <= char <= "\u04ff")
+        latin = sum(1 for char in text if ("a" <= char.lower() <= "z"))
+        if cyrillic >= latin:
+            return "Russian"
+        return "same language as the chat, unless it is mixed, then Russian"
+
     @staticmethod
     def _decrypt_message_text(crypto: MessageCrypto, message: Message) -> str:
         return crypto.decrypt(
@@ -142,13 +155,23 @@ class SummaryService:
             lines.append(f"[{ts}] {sender}: {text}")
 
         chat_text = "\n".join(lines)
+        preferred_language = SummaryService._preferred_output_language(chat_text)
 
         try:
             response = await _client.chat.completions.create(
                 model=settings.ai.summary_model,
                 messages=[
                     {"role": "system", "content": SYSTEM_PROMPT},
-                    {"role": "user", "content": f"Chat messages:\n\n{chat_text}"},
+                    {
+                        "role": "user",
+                        "content": (
+                            "Summarize this chat.\n"
+                            f"Preferred output language: {preferred_language}.\n"
+                            "Keep it to 3-5 sentences unless the chat is extremely "
+                            "short.\n\n"
+                            f"Chat messages:\n\n{chat_text}"
+                        ),
+                    },
                 ],
                 max_tokens=300,
                 temperature=0.3,
