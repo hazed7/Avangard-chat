@@ -58,7 +58,13 @@ async def _call_transcription(
     response.raise_for_status.return_value = None
     response.json.return_value = {"text": response_text}
 
-    with patch("app.modules.ai_assist.service._client_transcription") as mock_client:
+    with (
+        patch(
+            "app.modules.ai_assist.service.settings.ai_transcription_api_key",
+            "test-transcription-key",
+        ),
+        patch("app.modules.ai_assist.service._client_transcription") as mock_client,
+    ):
         if post_side_effect:
             mock_client.post = AsyncMock(side_effect=post_side_effect)
         else:

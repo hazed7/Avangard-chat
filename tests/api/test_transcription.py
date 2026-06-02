@@ -16,6 +16,7 @@ from tests.helpers.chat import (
 )
 
 TRANSCRIPTIONS_CREATE = "app.modules.ai_assist.service._client_transcription.post"
+TRANSCRIPTIONS_KEY = "app.modules.ai_assist.service.settings.ai_transcription_api_key"
 
 
 @pytest.fixture
@@ -26,6 +27,12 @@ def mock_subscriptions(client: TestClient):
     client.app.dependency_overrides[get_subscription_service] = lambda: mock_service
     yield mock_service
     client.app.dependency_overrides.pop(get_subscription_service, None)
+
+
+@pytest.fixture(autouse=True)
+def mock_transcription_key():
+    with patch(TRANSCRIPTIONS_KEY, "test-transcription-key"):
+        yield
 
 
 @pytest.fixture
