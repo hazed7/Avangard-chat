@@ -31,6 +31,9 @@ services:
       - AI_TRANSCRIPTION_MODEL=${AI_TRANSCRIPTION_MODEL:-qwen/qwen3-asr-flash-2026-02-10}
       - AI_TRANSCRIPTION_API_KEY=${AI_TRANSCRIPTION_API_KEY:-ai_api_key}
       - SUBSCRIPTION_SELF_ACTIVATION_ENABLED=${SUBSCRIPTION_SELF_ACTIVATION_ENABLED:-False}
+      - HTTP_PROXY=http://172.19.0.1:7890
+      - HTTPS_PROXY=http://172.19.0.1:7890
+      - NO_PROXY=localhost,127.0.0.1,mongo,dragonfly,typesense,livekit,s3,rustfs
     depends_on:
       mongodb:
         condition: service_healthy
