@@ -1,3 +1,4 @@
+import re
 from datetime import datetime
 from typing import Optional
 
@@ -24,7 +25,8 @@ SYSTEM_PROMPT = (
     "Keep the summary compact, concrete, and useful: key topics, decisions, "
     "agreements, action items, blockers, and unresolved questions. "
     "Do not invent facts, do not add introductions, and do not mention that "
-    "you are an AI. "
+    "you are an AI. Never output reasoning, hidden analysis, planning notes, "
+    "or tags like <think>. Return only the final user-facing summary. "
     "Output language rules: if the messages are mostly Russian or mixed, "
     "answer in Russian. If the messages are clearly mostly in another single "
     "language, answer in that language. If uncertain, answer in Russian."
@@ -32,9 +34,65 @@ SYSTEM_PROMPT = (
 
 # Жёсткий потолок — даже если диапазон огромный
 HARD_CAP = 100
+SUMMARY_MAX_TOKENS = 700
+SUMMARY_RETRY_MAX_TOKENS = 240
 
 
 class SummaryService:
+    @staticmethod
+    def _strip_reasoning_markup(text: str) -> str:
+        cleaned = re.sub(
+            r"<think>.*?</think>",
+            "",
+            text,
+            flags=re.DOTALL | re.IGNORECASE,
+        )
+        return cleaned.strip()
+
+    @staticmethod
+    async def _generate_summary(
+        *,
+        chat_text: str,
+        preferred_language: str,
+        force_short: bool = False,
+    ) -> str:
+        user_prompt = (
+            "Summarize this chat.\n"
+            f"Preferred output language: {preferred_language}.\n"
+            + (
+                "Keep it to at most 2 short sentences and under 80 words.\n"
+                if force_short
+                else "Keep it to 3-5 sentences unless the chat is extremely short.\n"
+            )
+            + "Do not output reasoning, internal notes, or <think> blocks.\n\n"
+            f"Chat messages:\n\n{chat_text}"
+        )
+
+        response = await _client.chat.completions.create(
+            model=settings.ai.summary_model,
+            messages=[
+                {"role": "system", "content": SYSTEM_PROMPT},
+                {"role": "user", "content": user_prompt},
+            ],
+            max_tokens=(
+                SUMMARY_RETRY_MAX_TOKENS if force_short else SUMMARY_MAX_TOKENS
+            ),
+            temperature=0.2,
+        )
+        summary = SummaryService._strip_reasoning_markup(
+            response.choices[0].message.content
+        )
+        finish_reason = getattr(response.choices[0], "finish_reason", None)
+
+        if finish_reason == "length" and not force_short:
+            return await SummaryService._generate_summary(
+                chat_text=chat_text,
+                preferred_language=preferred_language,
+                force_short=True,
+            )
+
+        return summary
+
     @staticmethod
     def _preferred_output_language(text: str) -> str:
         cyrillic = sum(1 for char in text if "\u0400" <= char <= "\u04ff")
@@ -55,6 +113,19 @@ class SummaryService:
                 "sender_id": linked_document_id(message.sender),
             },
         )
+
+    @staticmethod
+    def _message_text_for_summary(
+        crypto: MessageCrypto,
+        message: Message,
+    ) -> str | None:
+        if message.message_type == "voice":
+            for attachment in message.attachments:
+                if attachment.kind == "voice" and attachment.transcription:
+                    return attachment.transcription
+            return None
+
+        return SummaryService._decrypt_message_text(crypto, message)
 
     @staticmethod
     def _build_conditions(
@@ -146,7 +217,9 @@ class SummaryService:
             sender = getattr(msg.sender, "username", "?")
             ts = msg.created_at.strftime("%d.%m %H:%M")
 
-            plain = SummaryService._decrypt_message_text(crypto, msg)  # ← дешифруем
+            plain = SummaryService._message_text_for_summary(crypto, msg)
+            if not plain:
+                continue
             max_chars = settings.ai.summary_max_chars_per_message
             text = plain[:max_chars]
             if len(plain) > max_chars:
@@ -154,27 +227,22 @@ class SummaryService:
 
             lines.append(f"[{ts}] {sender}: {text}")
 
+        if not lines:
+            return (
+                "No messages with text or saved transcriptions found for the given "
+                "criteria.",
+                0,
+                False,
+                mode,
+            )
+
         chat_text = "\n".join(lines)
         preferred_language = SummaryService._preferred_output_language(chat_text)
 
         try:
-            response = await _client.chat.completions.create(
-                model=settings.ai.summary_model,
-                messages=[
-                    {"role": "system", "content": SYSTEM_PROMPT},
-                    {
-                        "role": "user",
-                        "content": (
-                            "Summarize this chat.\n"
-                            f"Preferred output language: {preferred_language}.\n"
-                            "Keep it to 3-5 sentences unless the chat is extremely "
-                            "short.\n\n"
-                            f"Chat messages:\n\n{chat_text}"
-                        ),
-                    },
-                ],
-                max_tokens=300,
-                temperature=0.3,
+            summary = await SummaryService._generate_summary(
+                chat_text=chat_text,
+                preferred_language=preferred_language,
             )
         except openai.APITimeoutError as exc:
             raise HTTPException(
@@ -212,5 +280,4 @@ class SummaryService:
                 detail=exc.message,
             ) from exc
 
-        summary = response.choices[0].message.content.strip()
         return summary, len(messages), was_capped, mode

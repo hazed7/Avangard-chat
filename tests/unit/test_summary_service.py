@@ -28,6 +28,8 @@ def _make_message(
     msg.sender.username = sender_username
     msg.room = MagicMock()
     msg.fetch_link = AsyncMock()
+    msg.message_type = "text"
+    msg.attachments = []
     return msg
 
 
@@ -46,6 +48,7 @@ def _make_crypto(decrypted_text: str = "Hello world"):
 def _make_openai_response(content: str = "This is a summary."):
     choice = MagicMock()
     choice.message.content = f"  {content}  "  # intentional whitespace
+    choice.finish_reason = "stop"
     response = MagicMock()
     response.choices = [choice]
     return response
@@ -91,6 +94,10 @@ class TestDetectMode:
 
     def test_preferred_output_language_defaults_to_russian_for_cyrillic(self):
         assert self.svc._preferred_output_language("привет hello") == "Russian"
+
+    def test_strip_reasoning_markup_removes_think_block(self):
+        text = "<think>internal reasoning</think>\nКраткая сводка."
+        assert self.svc._strip_reasoning_markup(text) == "Краткая сводка."
 
 
 # ---------------------------------------------------------------------------
@@ -197,6 +204,42 @@ class TestDecryptMessageText:
             aad=msg.text_aad,
             context={"room_id": "room123", "sender_id": "user456"},
         )
+
+
+class TestMessageTextForSummary:
+    def setup_method(self):
+        from app.modules.summary.service import SummaryService
+
+        self.svc = SummaryService
+
+    def test_regular_message_uses_decrypted_text(self):
+        crypto = _make_crypto("decrypted text")
+        msg = _make_message()
+        result = self.svc._message_text_for_summary(crypto, msg)
+        assert result == "decrypted text"
+        crypto.decrypt.assert_called_once()
+
+    def test_voice_message_uses_saved_transcription(self):
+        crypto = _make_crypto("should not be used")
+        msg = _make_message()
+        msg.message_type = "voice"
+        msg.attachments = [MagicMock(kind="voice", transcription="готовая расшифровка")]
+
+        result = self.svc._message_text_for_summary(crypto, msg)
+
+        assert result == "готовая расшифровка"
+        crypto.decrypt.assert_not_called()
+
+    def test_voice_message_without_transcription_returns_none(self):
+        crypto = _make_crypto("should not be used")
+        msg = _make_message()
+        msg.message_type = "voice"
+        msg.attachments = [MagicMock(kind="voice", transcription=None)]
+
+        result = self.svc._message_text_for_summary(crypto, msg)
+
+        assert result is None
+        crypto.decrypt.assert_not_called()
 
 
 # ---------------------------------------------------------------------------
@@ -342,6 +385,139 @@ class TestSummarizeRoom:
 
         user_content = captured["messages"][1]["content"]
         assert "Preferred output language: Russian." in user_content
+
+    @patch(CLIENT_PATH)
+    @patch(SETTINGS_PATH)
+    @patch(
+        "app.platform.persistence.links.linked_document_id", side_effect=lambda x: "id"
+    )
+    @patch(MESSAGE_PATH)
+    @patch(CHATROOM_PATH)
+    async def test_summary_uses_saved_voice_transcription(
+        self, mock_room_cls, mock_msg_cls, mock_linked, mock_settings, mock_client
+    ):
+        mock_room_cls.get = AsyncMock(return_value=_make_room())
+        mock_settings.ai.summary_max_messages = 50
+        mock_settings.ai.summary_max_chars_per_message = 500
+        mock_settings.ai.summary_model = "qwen/qwen3-32b"
+
+        msg = _make_message("ignored", "alice")
+        msg.message_type = "voice"
+        msg.attachments = [
+            MagicMock(kind="voice", transcription="это сохраненная расшифровка")
+        ]
+        _setup_message_query(mock_msg_cls, messages=[msg])
+
+        captured = {}
+
+        async def capture(**kwargs):
+            captured["messages"] = kwargs["messages"]
+            return _make_openai_response("Краткая сводка.")
+
+        mock_client.chat = MagicMock()
+        mock_client.chat.completions = MagicMock()
+        mock_client.chat.completions.create = AsyncMock(side_effect=capture)
+
+        await self._call(crypto=_make_crypto("не должно использоваться"))
+
+        user_content = captured["messages"][1]["content"]
+        assert "это сохраненная расшифровка" in user_content
+        assert "не должно использоваться" not in user_content
+
+    @patch(CLIENT_PATH)
+    @patch(SETTINGS_PATH)
+    @patch(
+        "app.platform.persistence.links.linked_document_id", side_effect=lambda x: "id"
+    )
+    @patch(MESSAGE_PATH)
+    @patch(CHATROOM_PATH)
+    async def test_summary_skips_voice_without_transcription(
+        self, mock_room_cls, mock_msg_cls, mock_linked, mock_settings, mock_client
+    ):
+        mock_room_cls.get = AsyncMock(return_value=_make_room())
+        mock_settings.ai.summary_max_messages = 50
+        mock_settings.ai.summary_max_chars_per_message = 500
+        mock_settings.ai.summary_model = "qwen/qwen3-32b"
+
+        msg = _make_message("ignored", "alice")
+        msg.message_type = "voice"
+        msg.attachments = [MagicMock(kind="voice", transcription=None)]
+        _setup_message_query(mock_msg_cls, messages=[msg])
+
+        summary, count, was_capped, mode = await self._call(
+            crypto=_make_crypto("не должно использоваться")
+        )
+
+        assert (
+            summary
+            == "No messages with text or saved transcriptions found for the given "
+            "criteria."
+        )
+        assert count == 0
+        assert was_capped is False
+        assert mode == "recent"
+
+    @patch(CLIENT_PATH)
+    @patch(SETTINGS_PATH)
+    @patch(
+        "app.platform.persistence.links.linked_document_id", side_effect=lambda x: "id"
+    )
+    @patch(MESSAGE_PATH)
+    @patch(CHATROOM_PATH)
+    async def test_summary_strips_think_block_from_model_output(
+        self, mock_room_cls, mock_msg_cls, mock_linked, mock_settings, mock_client
+    ):
+        mock_room_cls.get = AsyncMock(return_value=_make_room())
+        mock_settings.ai.summary_max_messages = 50
+        mock_settings.ai.summary_max_chars_per_message = 500
+        mock_settings.ai.summary_model = "qwen/qwen3-32b"
+
+        msgs = [_make_message("ignored", "alice")]
+        _setup_message_query(mock_msg_cls, messages=msgs)
+
+        mock_client.chat = MagicMock()
+        mock_client.chat.completions = MagicMock()
+        mock_client.chat.completions.create = AsyncMock(
+            return_value=_make_openai_response(
+                "<think>internal plan</think>\nКраткая сводка."
+            )
+        )
+
+        summary, _, _, _ = await self._call(crypto=_make_crypto("привет"))
+
+        assert summary == "Краткая сводка."
+
+    @patch(CLIENT_PATH)
+    @patch(SETTINGS_PATH)
+    @patch(
+        "app.platform.persistence.links.linked_document_id", side_effect=lambda x: "id"
+    )
+    @patch(MESSAGE_PATH)
+    @patch(CHATROOM_PATH)
+    async def test_summary_retries_with_shorter_prompt_on_length_finish_reason(
+        self, mock_room_cls, mock_msg_cls, mock_linked, mock_settings, mock_client
+    ):
+        mock_room_cls.get = AsyncMock(return_value=_make_room())
+        mock_settings.ai.summary_max_messages = 50
+        mock_settings.ai.summary_max_chars_per_message = 500
+        mock_settings.ai.summary_model = "qwen/qwen3-32b"
+
+        msgs = [_make_message("ignored", "alice")]
+        _setup_message_query(mock_msg_cls, messages=msgs)
+
+        first = _make_openai_response("Оборванная сводка")
+        first.choices[0].finish_reason = "length"
+        second = _make_openai_response("Короткая законченная сводка.")
+        second.choices[0].finish_reason = "stop"
+
+        mock_client.chat = MagicMock()
+        mock_client.chat.completions = MagicMock()
+        mock_client.chat.completions.create = AsyncMock(side_effect=[first, second])
+
+        summary, _, _, _ = await self._call(crypto=_make_crypto("привет"))
+
+        assert summary == "Короткая законченная сводка."
+        assert mock_client.chat.completions.create.await_count == 2
 
     # --- was_capped flag ---
 
