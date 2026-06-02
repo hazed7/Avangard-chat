@@ -240,6 +240,32 @@ class TestTranscriptionHappyPath:
         kwargs = mock_client.post.await_args.kwargs
         assert kwargs["json"]["input_audio"]["format"] == "webm"
 
+    @pytest.mark.asyncio
+    async def test_transcription_unavailable_when_placeholder_key_configured(self):
+        from app.modules.ai_assist import service as ai_assist_service
+        from app.modules.ai_assist.service import AIAssistService
+
+        audio = AsyncMock()
+        audio.read.return_value = b"audio-bytes"
+        attachment = Attachment(
+            filename="voice.mp3",
+            object_path="audio/room/file",
+            content_type="audio/mpeg",
+        )
+
+        with patch.object(
+            ai_assist_service.settings,
+            "ai_transcription_api_key",
+            "ai_transcription_api_key",
+        ):
+            with pytest.raises(HTTPException) as exc_info:
+                await AIAssistService.transcript_voice_message(audio, attachment)
+
+        assert exc_info.value.status_code == 503
+        assert (
+            exc_info.value.detail == "Transcription service is temporarily unavailable"
+        )
+
     def test_normalize_audio_format_matches_base_content_type(self):
         from app.modules.ai_assist.service import _normalize_audio_format
 
@@ -310,6 +336,28 @@ class TestTranscriptionErrorHandling:
 
         assert exc_info.value.status_code == 429
         assert exc_info.value.detail == "slow down"
+
+    @pytest.mark.asyncio
+    async def test_http_401_from_provider_maps_to_502(self):
+        response = MagicMock()
+        response.status_code = 401
+        response.text = "Unauthorized"
+        response.raise_for_status.side_effect = httpx.HTTPStatusError(
+            "Unauthorized",
+            request=MagicMock(),
+            response=response,
+        )
+
+        async def fail_post(*args, **kwargs):
+            return response
+
+        with pytest.raises(HTTPException) as exc_info:
+            await _call_transcription(post_side_effect=fail_post)
+
+        assert exc_info.value.status_code == 502
+        assert (
+            exc_info.value.detail == "Transcription service is temporarily unavailable"
+        )
 
 
 # ---------------------------------------------------------------------------

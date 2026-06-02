@@ -144,6 +144,14 @@ class AIAssistService:
         audio: ClientResponse, attachment: Attachment
     ) -> str:
         try:
+            if settings.ai.transcription_api_key in {
+                "",
+                "ai_transcription_api_key",
+                "ai_api_key",
+            }:
+                raise HTTPException(
+                    503, "Transcription service is temporarily unavailable"
+                )
             audio_bytes = await audio.read()
             audio_format = _normalize_audio_format(attachment.content_type)
             if not audio_format:
@@ -173,6 +181,10 @@ class AIAssistService:
         except httpx.ConnectError as exc:
             raise HTTPException(502, "Could not reach transcription service") from exc
         except httpx.HTTPStatusError as exc:
+            if exc.response.status_code in {401, 403}:
+                raise HTTPException(
+                    502, "Transcription service is temporarily unavailable"
+                ) from exc
             raise HTTPException(
                 status_code=exc.response.status_code,
                 detail=exc.response.text,
